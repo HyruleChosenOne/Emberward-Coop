@@ -75,6 +75,7 @@ namespace EmberwardCoop.UI
             session.Modals.OnHostModalChanged += (_, _) => _dirty = true;
             session.Run.OnMapVotesChanged += () => _dirty = true;
             session.Ownership.OnPeekUpdated += () => _dirty = true;
+            session.Balance.OnTurnBlockCountChanged += () => _dirty = true;
             CoopLoc.OnLanguageChanged += () => _dirty = true;
             CoopLogger.OnFeedEntryAdded += _ => _chatDirty = true;
 
@@ -711,6 +712,38 @@ namespace EmberwardCoop.UI
                 }
 
                 _rowRects.Add((p.PlayerId, rowRt));
+            }
+
+            if (GameRefs.IsInBattle && _session.Balance.IsBlockCapActive())
+            {
+                int cap = _session.Balance.GetEffectiveTurnBlockCap();
+                int remaining = _session.Balance.GetRemainingBlocksForPlayer(Net.LocalPlayerId);
+                Color countCol = remaining == 0
+                    ? NativeStyleProvider.StatusBad
+                    : (remaining == 1 ? NativeStyleProvider.StatusWarn : NativeStyleProvider.StatusReady);
+
+                var blkRow = NativeStyleProvider.CreatePanel(_rowsContainer, "HudBlocksRemaining", NativeStyleProvider.CardBg, addBorder: false, isSubPanel: true, roleOverride: PanelSurfaceRole.Card);
+                var blkLe = blkRow.AddComponent<LayoutElement>();
+                float blkH = compact ? 22f : 24f;
+                blkLe.minHeight = blkH;
+                blkLe.preferredHeight = blkH;
+
+                var blkHlg = blkRow.AddComponent<HorizontalLayoutGroup>();
+                blkHlg.padding = new RectOffset(8, 8, 2, 2);
+                blkHlg.childAlignment = TextAnchor.MiddleCenter;
+                blkHlg.childControlWidth = true;
+                blkHlg.childControlHeight = true;
+
+                NativeStyleProvider.CreateLabel(
+                    blkRow.transform,
+                    CoopLoc.F("hud.blocks_remaining", remaining, cap),
+                    compact ? 10.5f : 11f,
+                    countCol,
+                    TextAlignmentOptions.Center,
+                    FontStyles.Bold,
+                    autoSize: true,
+                    minFontSize: 9f,
+                    addShadow: true);
             }
 
             if (_hudRect != null)

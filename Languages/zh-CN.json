@@ -277,7 +277,7 @@
   "modcfg.auto_collapse_hud": "战斗波次中自动收起队伍面板：",
   "modcfg.show_cursors": "显示队友3D光标与名字：",
   "modcfg.show_ghosts": "显示队友建造虚影：",
-  "modcfg.ownership_rings": "防御塔归属光环：",
+  "modcfg.ownership_rings": "防御塔归属轮廓：",
   "modcfg.own_always": "始终显示",
   "modcfg.own_hover": "仅悬停时",
   "modcfg.own_off": "关闭",
@@ -286,5 +286,11 @@
   "modcfg.scale_large": "大",
   "modcfg.ready_sound": "全员准备就绪提示音：",
   "modcfg.lock_cam_radial": "轮盘菜单开启时锁定镜头：",
-  "modcfg.reset_keybinds": "恢复默认快捷键"
+  "modcfg.reset_keybinds": "恢复默认快捷键",
+  "hud.owner_only_upgrade": "只有 {0} 可以升级此防御塔",
+  "hud.blocks_remaining": "剩余方块：{0}/{1}",
+  "hud.block_limit_reached": "本回合方块放置已达上限（{0}/{1}）",
+  "settings.val_per_player_cap": "{0} / 玩家",
+  "transition.waiting_for_host": "等待房主...",
+  "victory.waiting_client_upgrades": "正在等待 {0} 完成升级..."
 }

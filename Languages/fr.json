@@ -277,7 +277,7 @@
   "modcfg.auto_collapse_hud": "Réduire le HUD groupe en combat :",
   "modcfg.show_cursors": "Curseurs 3D et noms des alliés :",
   "modcfg.show_ghosts": "Aperçus de placement des alliés :",
-  "modcfg.ownership_rings": "Anneaux de propriété des tours :",
+  "modcfg.ownership_rings": "Contours de propriété des tours :",
   "modcfg.own_always": "Toujours",
   "modcfg.own_hover": "Au survol",
   "modcfg.own_off": "Désactivé",
@@ -286,5 +286,11 @@
   "modcfg.scale_large": "Grand",
   "modcfg.ready_sound": "Signal sonore Prêt :",
   "modcfg.lock_cam_radial": "Verrouiller caméra (menus radiaux) :",
-  "modcfg.reset_keybinds": "Réinitialiser les touches"
+  "modcfg.reset_keybinds": "Réinitialiser les touches",
+  "hud.owner_only_upgrade": "Seul {0} peut améliorer cette tour",
+  "hud.blocks_remaining": "Blocs restants : {0}/{1}",
+  "hud.block_limit_reached": "Limite de blocs atteinte ({0}/{1} ce tour)",
+  "settings.val_per_player_cap": "{0} / Joueur",
+  "transition.waiting_for_host": "En attente de l'hôte...",
+  "victory.waiting_client_upgrades": "En attente de la fin des améliorations de {0}..."
 }

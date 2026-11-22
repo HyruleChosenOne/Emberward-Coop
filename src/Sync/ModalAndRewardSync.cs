@@ -1,8 +1,8 @@
 using System;
 using System.IO;
 using EmberwardCoop.Core;
+using EmberwardCoop.Localization;
 using EmberwardCoop.Networking;
-using UnityEngine;
 
 namespace EmberwardCoop.Sync
 {
@@ -27,7 +27,12 @@ namespace EmberwardCoop.Sync
         RoguelitePerk = 16,
         TowerArrange = 17,
         Victory = 18,
-        Defeat = 19
+        Defeat = 19,
+        StageUpgradeUnlock = 20,
+        KingUpgrade = 21,
+        ScrapMasterUpgrade = 22,
+        AcademyPerkReward = 23,
+        AltarEffectReward = 24
     }
 
     public sealed class ModalAndRewardSync
@@ -74,7 +79,6 @@ namespace EmberwardCoop.Sync
                 if (detected == CoopModalKind.None && wasOpen)
                 {
                     BroadcastModalClosed();
-                    // Re-sync run/economy immediately after Host completes any modal (Shop/Workshop/Rune/Reward/Altar/Draft)
                     _session()?.Run.CheckAndBroadcastHostRunState(force: true);
                     if (GameRefs.IsInBattle)
                         _session()?.Economy.CheckHostEconomyAndHand(force: true);
@@ -157,29 +161,34 @@ namespace EmberwardCoop.Sync
         public void BroadcastVictoryOrDefeat(bool isVictory, bool isFinalBoss)
         {
             if (!_net.IsHost) return;
+            if (isVictory)
+                _session()?.Votes.OnHostVictorySequenceStarted();
+
             _net.BroadcastToClients(PacketType.EvtVictoryOrDefeat, w =>
             {
                 w.Write(isVictory);
                 w.Write(isFinalBoss);
             });
             CoopLogger.Info(LogCategory.Modal, isVictory
-                ? (isFinalBoss ? "FINAL BOSS DEFEATED! Victory synced to all players!" : "Stage Victory synced to all players!")
-                : "Defeat synced to all players.");
+                ? (isFinalBoss ? "Final boss defeated; victory synced." : "Stage victory synced.")
+                : "Defeat synced.");
         }
 
         public void HandleEvtVictoryOrDefeat(BinaryReader r)
         {
             bool isVictory = r.ReadBoolean();
             bool isFinalBoss = r.ReadBoolean();
+            if (isVictory)
+                _session()?.Votes.OnClientVictorySequenceStarted();
+
             CoopLogger.Info(LogCategory.Modal, isVictory
-                ? (isFinalBoss ? "VICTORY! Final Boss defeated — waiting for Host on summary screen." : "Stage Cleared! Waiting for Host to collect rewards & continue.")
-                : "Defeat! Waiting for Host to retry or return to title.");
+                ? (isFinalBoss ? "Victory synced; waiting for Host on summary screen." : "Stage cleared; waiting for Host after rewards.")
+                : "Defeat synced; Host controls retry/return.");
 
-            GameRefs.ShowGameToast(isVictory
-                ? (isFinalBoss ? "Co-op Victory! Waiting for Host..." : "Stage Clear! Host is collecting rewards...")
-                : "Defeat — Host controls Retry / Return", 4.0f);
+            GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 3.5f);
 
-            _session()?.Run.MenuLockDirty = true;
+            var run = _session()?.Run;
+            if (run != null) run.MenuLockDirty = true;
         }
 
         private static void CloseOrphanClientRewardPopups()
@@ -193,7 +202,7 @@ namespace EmberwardCoop.Sync
                 if (top == null) return;
                 string name = top.GetIl2CppType()?.Name ?? "";
 
-                // Never close player's own settings/pause/deck viewer
+                // Never close player's own settings/pause/deck viewer or victory/defeat summary.
                 if (name.Contains("Setting") || name.Contains("Pause") || name.Contains("DeckList") ||
                     name.Contains("Victory") || name.Contains("Defeat"))
                     return;
@@ -216,6 +225,11 @@ namespace EmberwardCoop.Sync
             if (popup == null) return CoopModalKind.None;
             string t = popup.GetIl2CppType()?.Name ?? "";
 
+            if (t.Contains("StageUpgradeUnlock")) return CoopModalKind.StageUpgradeUnlock;
+            if (t.Contains("KingUpgrade")) return CoopModalKind.KingUpgrade;
+            if (t.Contains("ScrapMasterUpgrade")) return CoopModalKind.ScrapMasterUpgrade;
+            if (t.Contains("AcademyPerkReward")) return CoopModalKind.AcademyPerkReward;
+            if (t.Contains("AltarEffectReward")) return CoopModalKind.AltarEffectReward;
             if (t.Contains("TetrisDraft")) return CoopModalKind.TetrisDraft;
             if (t.Contains("ChooseRewardCard")) return CoopModalKind.RewardDraft;
             if (t.Contains("DiscoverCard")) return CoopModalKind.DiscoverChest;
@@ -258,13 +272,14 @@ namespace EmberwardCoop.Sync
             CoopModalKind.Shop or CoopModalKind.MiniShop => "Shop",
             CoopModalKind.Workshop or CoopModalKind.MiniWorkshop => "Workshop",
             CoopModalKind.RuneForge => "Runes",
-            CoopModalKind.Altar => "Altar",
+            CoopModalKind.Altar or CoopModalKind.AltarEffectReward => "Altar",
             CoopModalKind.Campsite => "Camp",
             CoopModalKind.Circus => "Circus",
-            CoopModalKind.Academy => "Academy",
+            CoopModalKind.Academy or CoopModalKind.AcademyPerkReward => "Academy",
             CoopModalKind.SecretVault => "Vault",
             CoopModalKind.QuestSelect or CoopModalKind.QuestReward => "Quest",
             CoopModalKind.RoguelitePerk => "Perk",
+            CoopModalKind.StageUpgradeUnlock or CoopModalKind.KingUpgrade or CoopModalKind.ScrapMasterUpgrade => "Upgrades",
             CoopModalKind.TowerArrange => "Loadout",
             CoopModalKind.Victory => "Victory",
             CoopModalKind.Defeat => "Defeat",
@@ -282,17 +297,18 @@ namespace EmberwardCoop.Sync
                 CoopModalKind.Shop or CoopModalKind.MiniShop => $"{host} is browsing the Shop...",
                 CoopModalKind.Workshop or CoopModalKind.MiniWorkshop => $"{host} is upgrading blocks at the Workshop...",
                 CoopModalKind.RuneForge => $"{host} is socketing runes...",
-                CoopModalKind.Altar => $"{host} is inspecting an Altar Pact...",
+                CoopModalKind.Altar or CoopModalKind.AltarEffectReward => $"{host} is inspecting an Altar Pact...",
                 CoopModalKind.Campsite => $"{host} is resting at the Campsite...",
                 CoopModalKind.Circus => $"{host} is spinning the Circus wheel...",
-                CoopModalKind.Academy => $"{host} is selecting Academy loadout...",
+                CoopModalKind.Academy or CoopModalKind.AcademyPerkReward => $"{host} is selecting Academy loadout...",
                 CoopModalKind.SecretVault => $"{host} is choosing from the Secret Vault...",
                 CoopModalKind.QuestSelect => $"{host} is picking a Run Quest...",
                 CoopModalKind.QuestReward => $"{host} is claiming Quest Rewards...",
                 CoopModalKind.RoguelitePerk => $"{host} is choosing a Perk...",
+                CoopModalKind.StageUpgradeUnlock or CoopModalKind.KingUpgrade or CoopModalKind.ScrapMasterUpgrade => $"{host} is picking stage upgrades...",
                 CoopModalKind.TowerArrange => $"{host} is arranging Tower Loadout...",
-                CoopModalKind.Victory => $"Victory! Waiting for {host} to continue...",
-                CoopModalKind.Defeat => $"Defeat — Waiting for {host}...",
+                CoopModalKind.Victory => CoopLoc.T("transition.waiting_for_host"),
+                CoopModalKind.Defeat => CoopLoc.T("transition.waiting_for_host"),
                 _ => ""
             };
         }

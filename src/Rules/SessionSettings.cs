@@ -89,7 +89,7 @@ namespace EmberwardCoop.Rules
                     StartingGold = StartingGoldRule.FullPerPlayer;
                     WaveIncomeMultiplier = Mathf.Clamp(1.00f - extra * 0.10f, 0.70f, 1.50f);
                     BlockPacing = BlockPacingRule.IndependentHandCap;
-                    SharedTurnBlockCap = 4 + extra;
+                    SharedTurnBlockCap = 3;
                     CoreHp = CoreHpRule.ScaledBonusCore;
                     AllowResourceGifting = true;
                     GiftPerWaveCap = 0;
@@ -105,7 +105,7 @@ namespace EmberwardCoop.Rules
                     StartingGold = StartingGoldRule.BalancedSplit;
                     WaveIncomeMultiplier = Mathf.Clamp(1.15f / p, 0.50f, 1.00f);
                     BlockPacing = BlockPacingRule.SharedTurnBlockCap;
-                    SharedTurnBlockCap = Math.Max(2, 2 + extra);
+                    SharedTurnBlockCap = 3;
                     CoreHp = CoreHpRule.SharedSingleCore;
                     AllowResourceGifting = true;
                     GiftPerWaveCap = 100;
@@ -121,7 +121,7 @@ namespace EmberwardCoop.Rules
                     StartingGold = StartingGoldRule.FullPerPlayer;
                     WaveIncomeMultiplier = 1.10f;
                     BlockPacing = BlockPacingRule.IndependentHandCap;
-                    SharedTurnBlockCap = 6;
+                    SharedTurnBlockCap = 3;
                     CoreHp = CoreHpRule.ScaledBonusCore;
                     AllowResourceGifting = true;
                     GiftPerWaveCap = 0;
@@ -138,7 +138,7 @@ namespace EmberwardCoop.Rules
                     StartingGold = StartingGoldRule.BalancedSplit;
                     WaveIncomeMultiplier = Mathf.Clamp((float)Math.Round(1.26f / Math.Max(1, p), 2), 0.50f, 1.00f);
                     BlockPacing = BlockPacingRule.SharedTurnBlockCap;
-                    SharedTurnBlockCap = Math.Clamp(2 + extra, 2, 6);
+                    SharedTurnBlockCap = 3;
                     CoreHp = CoreHpRule.SharedSingleCore;
                     AllowResourceGifting = true;
                     GiftPerWaveCap = 0;

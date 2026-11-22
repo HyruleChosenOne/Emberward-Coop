@@ -277,7 +277,7 @@
   "modcfg.auto_collapse_hud": "戦闘中にパーティHUDを自動収納:",
   "modcfg.show_cursors": "味方の3Dカーソルと名前を表示:",
   "modcfg.show_ghosts": "味方の配置プレビューを表示:",
-  "modcfg.ownership_rings": "タワー所有者リング表示:",
+  "modcfg.ownership_rings": "タワー所有アウトライン：",
   "modcfg.own_always": "常時",
   "modcfg.own_hover": "ホバー時のみ",
   "modcfg.own_off": "オフ",
@@ -286,5 +286,11 @@
   "modcfg.scale_large": "大",
   "modcfg.ready_sound": "準備完了サウンド通知:",
   "modcfg.lock_cam_radial": "ホイール表示中にカメラ固定:",
-  "modcfg.reset_keybinds": "キー設定を初期値に戻す"
+  "modcfg.reset_keybinds": "キー設定を初期値に戻す",
+  "hud.owner_only_upgrade": "{0}のみこのタワーをアップグレードできます",
+  "hud.blocks_remaining": "残りブロック：{0}/{1}",
+  "hud.block_limit_reached": "ブロック配置上限に達しました（今ターン {0}/{1}）",
+  "settings.val_per_player_cap": "{0} / プレイヤー",
+  "transition.waiting_for_host": "ホストを待機中...",
+  "victory.waiting_client_upgrades": "{0}のアップグレード完了を待機中..."
 }

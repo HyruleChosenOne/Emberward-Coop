@@ -21,10 +21,24 @@ namespace EmberwardCoop.Sync
         private readonly NetworkManager _net;
         private readonly Func<SessionController> _session;
 
+        private int _pendingClientUpgradeInstanceId;
+        private float _pendingClientUpgradeUntil;
+
         public BoardAndCombatSync(NetworkManager net, Func<SessionController> session)
         {
             _net = net;
             _session = session;
+        }
+
+        public bool HasPendingClientUpgrade(ABaseTower tower)
+            => tower != null
+               && _pendingClientUpgradeInstanceId == tower.GetInstanceID()
+               && Time.unscaledTime < _pendingClientUpgradeUntil;
+
+        public void ClearPendingClientUpgrade()
+        {
+            _pendingClientUpgradeInstanceId = 0;
+            _pendingClientUpgradeUntil = 0f;
         }
 
         public byte[] CaptureBoardSnapshotBytes()
@@ -90,11 +104,13 @@ namespace EmberwardCoop.Sync
                 if (t == null || t.SettingData == null) { w.Write(false); continue; }
                 w.Write(true);
                 w.Write(ownership != null ? ownership.GetTowerOwner(t) : 0);
+                w.Write(ownership != null ? ownership.GetTowerNetId(t) : 0);
                 w.Write((int)t.SettingData.itemType);
                 w.WriteVector3(t.transform.position);
                 w.WriteVector3(t.transform.eulerAngles);
                 w.Write(t.Level);
                 w.Write((int)t.UpgradeType);
+                w.Write(t.UpgradeSpentCost);
                 w.Write((int)t.TargetPriority);
             }
         }
@@ -129,28 +145,36 @@ namespace EmberwardCoop.Sync
             {
                 if (!r.ReadBoolean()) continue;
                 int ownerId = r.ReadInt32();
+                int towerNetId = r.ReadInt32();
                 var itemType = (eItemType)r.ReadInt32();
                 Vector3 pos = r.ReadVector3();
                 Vector3 rot = r.ReadVector3();
                 int level = r.ReadInt32();
                 int upgType = r.ReadInt32();
+                int upgradeSpentCost = r.ReadInt32();
                 int prio = r.ReadInt32();
                 hostTowerPositions.Add(pos);
 
-                var existing = GameRefs.FindTowerAt(pos, 0.35f);
+                var existing = ownership?.FindTowerByNetId(towerNetId) ?? GameRefs.FindTowerAt(pos, 0.35f);
                 if (existing == null)
-                    existing = SpawnTowerInternal(itemType, pos, rot, ownerId, countAsNewStat: false);
+                    existing = SpawnTowerInternal(itemType, pos, rot, ownerId, countAsNewStat: false, towerNetId: towerNetId);
                 else
-                    ownership?.RegisterExistingTowerOwner(existing, ownerId);
+                    ownership?.RegisterExistingTowerOwner(existing, ownerId, towerNetId);
 
                 if (existing != null)
                 {
+                    int prevLevel = existing.Level;
                     using (NetworkScope.Enter())
                     {
-                        while (existing.Level < level && !existing.IsMaxLevel())
+                        int guard = 0;
+                        while (existing.Level < level && !existing.IsMaxLevel() && guard++ < 8)
                             existing.Upgrade((ABaseTower.eUpgradeType)upgType, false, true, true, false);
+                        if (upgradeSpentCost > 0)
+                            existing.OverrideUpgradeSpentCost(upgradeSpentCost);
                         existing.OverrideTargetPriority((eTowerTargetPriority)prio);
                     }
+                    if (existing.Level > prevLevel)
+                        ownership?.OnTowerUpgraded(existing);
                 }
             }
 
@@ -210,14 +234,16 @@ namespace EmberwardCoop.Sync
             var ig = MainGame.Instance?.IngameData;
             if (s == null || ig == null) return;
 
-            if (!s.Balance.CanPlaceBlockNow(out _))
+            if (!s.Balance.CanPlaceBlockNow(senderId, out _))
             {
+                s.Balance.BroadcastTurnBlockCount();
                 BroadcastBoardSnapshot(senderId);
                 return;
             }
 
             if (GameRefs.FindTetrisAt(pos, 0.25f) != null)
             {
+                s.Balance.BroadcastTurnBlockCount();
                 BroadcastBoardSnapshot(senderId);
                 return;
             }
@@ -229,6 +255,7 @@ namespace EmberwardCoop.Sync
                 matched = GameRefs.FindHandCard(ig, cInfo.RuntimeId, (eItemType)cInfo.ItemType);
                 if (matched == null)
                 {
+                    s.Balance.BroadcastTurnBlockCount();
                     s.Economy.BroadcastSnapshot(senderId);
                     return;
                 }
@@ -245,7 +272,7 @@ namespace EmberwardCoop.Sync
                         ig.OnRequestRemoveCardFromHand(matched);
                 }
 
-                s.Balance.IncrementTurnBlockCount();
+                s.Balance.IncrementTurnBlockCount(senderId);
                 BroadcastEvtPlaceTetris(senderId, (eItemType)authCard.ItemType, pos, rot, authCard);
                 s.Feedback.SpawnActionFeedback(senderId, pos, "BLOCK", false);
                 if (s.Ruleset.SyncsGlobalEconomyAndHand)
@@ -347,11 +374,12 @@ namespace EmberwardCoop.Sync
             if (!s.Ruleset.CanPlayerRecallBlock(senderId, block)) return;
             if (!(forceRecall || block.IsRecallAble())) return;
 
+            int ownerId = s.Ownership.GetBlockOwner(block);
             using (NetworkScope.Enter())
             {
                 if (s.Ruleset.ClientSpendsOwnResourcesOnBuild && senderId != 0)
                 {
-                    // In Separate mode, Host removes block without adding Client's recalled block card to Host's hand
+                    // Separate mode: remove block on Host without adding the Client's card to Host's hand.
                     s.Ownership.UnregisterBlock(block);
                     block.Remove();
                 }
@@ -362,7 +390,7 @@ namespace EmberwardCoop.Sync
                 }
             }
 
-            s.Balance.DecrementTurnBlockCount();
+            s.Balance.DecrementTurnBlockCount(ownerId >= 0 ? ownerId : senderId);
             BroadcastEvtRecallTetris(senderId, pos, forceRecall);
             if (s.Ruleset.SyncsGlobalEconomyAndHand)
                 s.Economy.CheckHostEconomyAndHand(force: true);
@@ -453,10 +481,11 @@ namespace EmberwardCoop.Sync
                     else if (buildCost > 0) ig.AddCoin(-buildCost);
                 }
 
-                var tower = SpawnTowerInternal(towerType, pos, rot, senderId, countAsNewStat: true);
+                int towerNetId = s.Ownership.AllocateTowerNetId();
+                var tower = SpawnTowerInternal(towerType, pos, rot, senderId, countAsNewStat: true, towerNetId: towerNetId);
                 if (tower != null)
                 {
-                    BroadcastEvtPlaceTower(senderId, towerType, pos, rot);
+                    BroadcastEvtPlaceTower(senderId, towerNetId, towerType, pos, rot);
                     s.Feedback.SpawnActionFeedback(senderId, pos, "BUILD", false);
                     if (s.Ruleset.SyncsGlobalEconomyAndHand)
                         s.Economy.CheckHostEconomyAndHand(force: true);
@@ -464,12 +493,13 @@ namespace EmberwardCoop.Sync
             }
         }
 
-        public void BroadcastEvtPlaceTower(int actorId, eItemType towerType, Vector3 pos, Vector3 rot)
+        public void BroadcastEvtPlaceTower(int actorId, int towerNetId, eItemType towerType, Vector3 pos, Vector3 rot)
         {
             if (!_net.IsHost) return;
             _net.BroadcastToClients(PacketType.EvtPlaceTower, w =>
             {
                 w.Write(actorId);
+                w.Write(towerNetId);
                 w.Write((int)towerType);
                 w.WriteVector3(pos);
                 w.WriteVector3(rot);
@@ -479,18 +509,23 @@ namespace EmberwardCoop.Sync
         public void HandleEvtPlaceTower(BinaryReader r)
         {
             int actorId = r.ReadInt32();
+            int towerNetId = r.ReadInt32();
             var towerType = (eItemType)r.ReadInt32();
             Vector3 pos = r.ReadVector3();
             Vector3 rot = r.ReadVector3();
 
-            if (GameRefs.FindTowerAt(pos, 0.25f) == null)
-                SpawnTowerInternal(towerType, pos, rot, actorId, countAsNewStat: true);
+            var s = _session();
+            var existing = s?.Ownership.FindTowerByNetId(towerNetId) ?? GameRefs.FindTowerAt(pos, 0.25f);
+            if (existing == null)
+                SpawnTowerInternal(towerType, pos, rot, actorId, countAsNewStat: true, towerNetId: towerNetId);
+            else
+                s?.Ownership.RegisterExistingTowerOwner(existing, actorId, towerNetId);
 
             if (actorId != _net.LocalPlayerId)
-                _session()?.Feedback.SpawnActionFeedback(actorId, pos, "BUILD", false);
+                s?.Feedback.SpawnActionFeedback(actorId, pos, "BUILD", false);
         }
 
-        public ABaseTower SpawnTowerInternal(eItemType towerType, Vector3 pos, Vector3 eulerRot, int ownerId, bool countAsNewStat)
+        public ABaseTower SpawnTowerInternal(eItemType towerType, Vector3 pos, Vector3 eulerRot, int ownerId, bool countAsNewStat, int towerNetId = 0)
         {
             using (NetworkScope.Enter())
             {
@@ -504,8 +539,8 @@ namespace EmberwardCoop.Sync
                         Physics.SyncTransforms();
                         GameRefs.SendEventRef<GameObject>(eGameEvents.OnGridObjectChanged, tower.gameObject);
                         GameRefs.SendEventRef<ABaseTower>(eGameEvents.OnTowerPlaced, tower);
-                        if (countAsNewStat) _session()?.Ownership.StampTowerOwner(tower, ownerId);
-                        else _session()?.Ownership.RegisterExistingTowerOwner(tower, ownerId);
+                        if (countAsNewStat) _session()?.Ownership.StampTowerOwner(tower, ownerId, towerNetId);
+                        else _session()?.Ownership.RegisterExistingTowerOwner(tower, ownerId, towerNetId);
                     }
                     return tower;
                 }
@@ -517,53 +552,137 @@ namespace EmberwardCoop.Sync
             }
         }
 
-        public void ClientSendUpgradeTower(Vector3 pos, ABaseTower.eUpgradeType upgradeType)
+        public void ClientSendUpgradeTower(ABaseTower tower, ABaseTower.eUpgradeType upgradeType)
         {
-            _net.SendToHost(PacketType.CmdUpgradeTower, w => { w.WriteVector3(pos); w.Write((int)upgradeType); });
+            if (tower == null) return;
+            int netId = _session()?.Ownership.GetTowerNetId(tower) ?? 0;
+            Vector3 pos = tower.transform.position;
+            _pendingClientUpgradeInstanceId = tower.GetInstanceID();
+            _pendingClientUpgradeUntil = Time.unscaledTime + 1.5f;
+            _net.SendToHost(PacketType.CmdUpgradeTower, w =>
+            {
+                w.Write(netId);
+                w.WriteVector3(pos);
+                w.Write((int)upgradeType);
+            });
         }
 
         public void HandleCmdUpgradeTower(int senderId, BinaryReader r)
         {
+            int towerNetId = r.ReadInt32();
             Vector3 pos = r.ReadVector3();
             var upgType = (ABaseTower.eUpgradeType)r.ReadInt32();
+
             var s = _session();
-            var tower = GameRefs.FindTowerAt(pos, 0.75f);
             var ig = MainGame.Instance?.IngameData;
-            if (s == null || tower == null || ig == null || tower.IsMaxLevel()) return;
-            if (!s.Ruleset.CanPlayerModifyTower(senderId, tower)) return;
+            if (s == null || ig == null) return;
+
+            var tower = s.Ownership.FindTowerByNetId(towerNetId) ?? GameRefs.FindTowerAt(pos, 1.0f);
+            if (tower == null || tower.IsMaxLevel()) return;
+            if (!s.Ruleset.CanPlayerUpgradeTower(senderId, tower)) return;
 
             bool freeOnHost = s.Ruleset.ClientSpendsOwnResourcesOnBuild;
-            if (!freeOnHost)
+            int cost = tower.GetUpgradeCost(upgType);
+            if (!freeOnHost && !ig.IsCoinEnough(cost))
             {
-                int cost = tower.GetUpgradeCost(upgType);
-                if (!ig.IsCoinEnough(cost)) { s.Economy.BroadcastSnapshot(senderId); return; }
+                s.Economy.BroadcastSnapshot(senderId);
+                return;
             }
 
-            using (NetworkScope.Enter()) tower.Upgrade(upgType, !freeOnHost, freeOnHost, false, false);
-            BroadcastEvtUpgradeTower(senderId, pos, upgType);
-            s.Feedback.SpawnActionFeedback(senderId, pos, $"LV.{tower.Level}", true);
+            int levelBefore = tower.Level;
+            int coinBefore = ig.Coin;
+            int spentBefore = tower.UpgradeSpentCost;
+
+            using (NetworkScope.Enter())
+            {
+                tower.Upgrade(upgType, !freeOnHost, freeOnHost, false, false);
+                if (tower.Level <= levelBefore && !tower.IsMaxLevel())
+                    tower.Upgrade(upgType, false, true, false, false);
+
+                if (!freeOnHost && cost > 0 && ig.Coin == coinBefore)
+                    ig.AddCoin(-cost);
+                else if (freeOnHost && ig.Coin != coinBefore)
+                    ig.SetCoin(coinBefore);
+
+                if (cost > 0 && tower.UpgradeSpentCost == spentBefore)
+                    tower.OverrideUpgradeSpentCost(spentBefore + cost);
+
+                var tc = GameRefs.GetTowerControl();
+                if (tc != null && tc.curTower == tower && tc.gameObject.activeInHierarchy)
+                    tc.UpdateUIContent(tower);
+            }
+
+            if (tower.Level <= levelBefore) return;
+
+            s.Ownership.OnTowerUpgraded(tower);
+            int resolvedNetId = s.Ownership.GetTowerNetId(tower);
+            BroadcastEvtUpgradeTower(senderId, resolvedNetId, tower.transform.position, tower.UpgradeType, tower.Level, tower.UpgradeSpentCost, cost);
+            s.Feedback.SpawnActionFeedback(senderId, tower.transform.position, $"LV.{tower.Level}", true);
             if (s.Ruleset.SyncsGlobalEconomyAndHand)
                 s.Economy.CheckHostEconomyAndHand(force: true);
         }
 
-        public void BroadcastEvtUpgradeTower(int actorId, Vector3 pos, ABaseTower.eUpgradeType upgType)
+        public void BroadcastEvtUpgradeTower(int actorId, int towerNetId, Vector3 pos, ABaseTower.eUpgradeType upgType, int newLevel, int upgradeSpentCost, int upgradeCost)
         {
             if (!_net.IsHost) return;
-            _net.BroadcastToClients(PacketType.EvtUpgradeTower, w => { w.Write(actorId); w.WriteVector3(pos); w.Write((int)upgType); });
+            _net.BroadcastToClients(PacketType.EvtUpgradeTower, w =>
+            {
+                w.Write(actorId);
+                w.Write(towerNetId);
+                w.WriteVector3(pos);
+                w.Write((int)upgType);
+                w.Write(newLevel);
+                w.Write(upgradeSpentCost);
+                w.Write(upgradeCost);
+            });
         }
 
         public void HandleEvtUpgradeTower(BinaryReader r)
         {
             int actorId = r.ReadInt32();
+            int towerNetId = r.ReadInt32();
             Vector3 pos = r.ReadVector3();
             var upgType = (ABaseTower.eUpgradeType)r.ReadInt32();
-            var tower = GameRefs.FindTowerAt(pos, 0.75f);
-            if (tower != null && !tower.IsMaxLevel())
+            int newLevel = r.ReadInt32();
+            int upgradeSpentCost = r.ReadInt32();
+            int upgradeCost = r.ReadInt32();
+
+            ClearPendingClientUpgrade();
+
+            var s = _session();
+            var tower = s?.Ownership.FindTowerByNetId(towerNetId) ?? GameRefs.FindTowerAt(pos, 1.0f);
+            if (tower == null) return;
+
+            int localCost = tower.GetUpgradeCost(upgType);
+            int levelBefore = tower.Level;
+
+            using (NetworkScope.Enter())
             {
-                using (NetworkScope.Enter()) tower.Upgrade(upgType, false, true, false, false);
-                if (actorId != _net.LocalPlayerId)
-                    _session()?.Feedback.SpawnActionFeedback(actorId, pos, $"LV.{tower.Level}", true);
+                if (actorId == _net.LocalPlayerId && s != null && s.Ruleset.ClientSpendsOwnResourcesOnBuild)
+                {
+                    var ig = MainGame.Instance?.IngameData;
+                    int spend = localCost > 0 ? localCost : upgradeCost;
+                    if (ig != null && spend > 0)
+                        ig.AddCoin(-Math.Min(spend, ig.Coin));
+                }
+
+                int guard = 0;
+                while (tower.Level < newLevel && !tower.IsMaxLevel() && guard++ < 8)
+                    tower.Upgrade(upgType, false, true, false, false);
+
+                if (upgradeSpentCost > 0)
+                    tower.OverrideUpgradeSpentCost(upgradeSpentCost);
+
+                var tc = GameRefs.GetTowerControl();
+                if (tc != null && tc.curTower == tower && tc.gameObject.activeInHierarchy)
+                    tc.UpdateUIContent(tower);
             }
+
+            if (tower.Level > levelBefore)
+                s?.Ownership.OnTowerUpgraded(tower);
+
+            if (actorId != _net.LocalPlayerId)
+                s?.Feedback.SpawnActionFeedback(actorId, tower.transform.position, $"LV.{tower.Level}", true);
         }
 
         public void ClientSendSellTower(Vector3 pos) => _net.SendToHost(PacketType.CmdSellTower, w => w.WriteVector3(pos));

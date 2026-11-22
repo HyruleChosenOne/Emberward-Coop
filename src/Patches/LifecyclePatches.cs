@@ -1,5 +1,6 @@
 using System;
 using EmberwardCoop.Core;
+using EmberwardCoop.Localization;
 using EmberwardCoop.Rules;
 using EmberwardCoop.Serialization;
 using EmberwardCoop.Sync;
@@ -90,8 +91,7 @@ namespace EmberwardCoop.Patches
         public static void GameDataManager_SerializeCache_Finalizer(GameDataManager __instance, bool __state)
             => SoloSaveGuard.EndSoloSafeSerialize(__instance, __state);
 
-        // Co-op-only memory unlock overrides: strictly active in memory while inside the Co-op Menu
-        // or an active Co-op session with "Unlock All Maps/Modes (Co-op Only)" enabled.
+        // Co-op-only memory unlock overrides; never persisted to solo savefiles.
         [HarmonyPatch(typeof(PlayerLifetimeData), nameof(PlayerLifetimeData.IsWorldUnlocked), new[] { typeof(eGameDifficultyType), typeof(eWorldType) })]
         [HarmonyPostfix]
         public static void PlayerLifetimeData_IsWorldUnlocked_Postfix(ref bool __result)
@@ -138,7 +138,7 @@ namespace EmberwardCoop.Patches
         {
             if (S != null && S.Net.IsClient)
             {
-                GameRefs.ShowGameToast("Waiting for Co-op Host to start run", 2.0f);
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
                 return false;
             }
             return true;
@@ -150,7 +150,7 @@ namespace EmberwardCoop.Patches
         {
             if (S != null && S.Net.IsClient)
             {
-                GameRefs.ShowGameToast("Waiting for Co-op Host to continue run", 2.0f);
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
                 return false;
             }
             return true;
@@ -211,34 +211,60 @@ namespace EmberwardCoop.Patches
         [HarmonyPrefix]
         public static bool BackToTitle_OnButtonClick_Prefix()
         {
-            if (S != null && S.Net.IsClient) return false;
+            if (S != null && S.Net.IsClient)
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
+                return false;
+            }
             if (S != null && S.Net.IsHost) S.SaveActiveCoopRun("map_back_to_title");
             return true;
         }
 
         [HarmonyPatch(typeof(UI_PauseMenu), nameof(UI_PauseMenu.OnClickButton_QuickRestart), new Type[0])]
         [HarmonyPrefix]
-        public static bool Pause_QuickRestart_Prefix() => S == null || !S.Net.IsClient;
+        public static bool Pause_QuickRestart_Prefix()
+        {
+            if (S != null && S.Net.IsClient)
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
+                return false;
+            }
+            return true;
+        }
 
         [HarmonyPatch(typeof(UI_PauseMenu), nameof(UI_PauseMenu.OnClickButton_EndChallenge), new Type[0])]
         [HarmonyPrefix]
-        public static bool Pause_EndChallenge_Prefix() => S == null || !S.Net.IsClient;
+        public static bool Pause_EndChallenge_Prefix()
+        {
+            if (S != null && S.Net.IsClient)
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
+                return false;
+            }
+            return true;
+        }
 
         [HarmonyPatch(typeof(UI_PauseMenu), nameof(UI_PauseMenu.OnClickButton_MainMenu), new Type[0])]
         [HarmonyPrefix]
         public static bool Pause_MainMenu_Prefix()
         {
-            if (S != null && S.Net.IsClient) return false;
+            if (S != null && S.Net.IsClient)
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
+                return false;
+            }
             if (S != null && S.Net.IsHost) S.SaveActiveCoopRun("pause_main_menu");
             return true;
         }
 
-        [HarmonyPatch(typeof(UI_Victory_Popup), nameof(UI_Victory_Popup.OnClickContinue), new Type[0])]
-        [HarmonyPrefix]
-        public static bool Victory_Continue_Prefix()
+        private static bool CheckVictoryTransitionAllowed()
         {
-            if (S == null || !S.Net.IsConnected) return true;
-            if (S.Net.IsClient) return false;
+            if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying) return true;
+            if (S.Net.IsClient)
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
+                return false;
+            }
             if (S.Net.IsHost && !S.Votes.CanHostAdvancePastBarrier(out string reason))
             {
                 GameRefs.ShowGameToast(reason, 2.5f);
@@ -247,25 +273,95 @@ namespace EmberwardCoop.Patches
             return true;
         }
 
+        private static bool IsNonTransitionSummaryKey(string keyName)
+        {
+            if (string.IsNullOrEmpty(keyName)) return false;
+            return keyName.IndexOf("Map", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   keyName.IndexOf("Back", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   keyName.IndexOf("Cancel", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        [HarmonyPatch(typeof(UI_Victory_Popup), nameof(UI_Victory_Popup.StartVictoryProc), new[] { typeof(TetrisCardData), typeof(bool), typeof(bool) })]
+        [HarmonyPostfix]
+        public static void Victory_StartVictoryProc_Postfix()
+        {
+            if (S == null || !S.Net.IsConnected) return;
+            if (S.Net.IsHost)
+            {
+                S.Votes.OnHostVictorySequenceStarted();
+            }
+            else if (S.Net.IsClient)
+            {
+                S.Votes.OnClientVictorySequenceStarted();
+                S.Run.MenuLockDirty = true;
+            }
+        }
+
+        [HarmonyPatch(typeof(UI_Victory_Popup), nameof(UI_Victory_Popup.OnClickContinue), new Type[0])]
+        [HarmonyPrefix]
+        public static bool Victory_Continue_Prefix() => CheckVictoryTransitionAllowed();
+
         [HarmonyPatch(typeof(UI_Victory_Popup), nameof(UI_Victory_Popup.OnClickBackToMenu), new Type[0])]
         [HarmonyPrefix]
-        public static bool Victory_BackToMenu_Prefix() => S == null || !S.Net.IsClient;
+        public static bool Victory_BackToMenu_Prefix() => CheckVictoryTransitionAllowed();
 
         [HarmonyPatch(typeof(UI_Victory_Popup), nameof(UI_Victory_Popup.OnClickMoreLevelsButton), new Type[0])]
         [HarmonyPrefix]
-        public static bool Victory_MoreLevels_Prefix() => S == null || !S.Net.IsClient;
+        public static bool Victory_MoreLevels_Prefix() => CheckVictoryTransitionAllowed();
 
         [HarmonyPatch(typeof(UI_Victory_Popup), nameof(UI_Victory_Popup.OnClickMoreWavesButton), new Type[0])]
         [HarmonyPrefix]
-        public static bool Victory_MoreWaves_Prefix() => S == null || !S.Net.IsClient;
+        public static bool Victory_MoreWaves_Prefix() => CheckVictoryTransitionAllowed();
+
+        [HarmonyPatch(typeof(UI_Victory_Popup), nameof(UI_Victory_Popup.OnTriggerKeybind), new[] { typeof(string) })]
+        [HarmonyPrefix]
+        public static bool Victory_OnTriggerKeybind_Prefix(string keyName)
+        {
+            if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying) return true;
+            if (IsNonTransitionSummaryKey(keyName)) return true;
+            return CheckVictoryTransitionAllowed();
+        }
+
+        [HarmonyPatch(typeof(UI_VictoryChallengeConfirm_Popup), nameof(UI_VictoryChallengeConfirm_Popup.OnClickButton_Yes), new Type[0])]
+        [HarmonyPrefix]
+        public static bool VictoryChallengeConfirm_Yes_Prefix() => CheckVictoryTransitionAllowed();
 
         [HarmonyPatch(typeof(UI_Defeat_Popup), nameof(UI_Defeat_Popup.OnClick_BackToTitle), new Type[0])]
         [HarmonyPrefix]
-        public static bool Defeat_BackToTitle_Prefix() => S == null || !S.Net.IsClient;
+        public static bool Defeat_BackToTitle_Prefix()
+        {
+            if (S != null && S.Net.IsClient)
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
+                return false;
+            }
+            return true;
+        }
 
         [HarmonyPatch(typeof(UI_Defeat_Popup), nameof(UI_Defeat_Popup.OnClick_Retry), new Type[0])]
         [HarmonyPrefix]
-        public static bool Defeat_Retry_Prefix() => S == null || !S.Net.IsClient;
+        public static bool Defeat_Retry_Prefix()
+        {
+            if (S != null && S.Net.IsClient)
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
+                return false;
+            }
+            return true;
+        }
+
+        [HarmonyPatch(typeof(UI_Defeat_Popup), nameof(UI_Defeat_Popup.OnTriggerKeybind), new[] { typeof(string) })]
+        [HarmonyPrefix]
+        public static bool Defeat_OnTriggerKeybind_Prefix(string keyName)
+        {
+            if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying) return true;
+            if (S.Net.IsClient && !IsNonTransitionSummaryKey(keyName))
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("transition.waiting_for_host"), 2.0f);
+                return false;
+            }
+            return true;
+        }
 
         [HarmonyPatch(typeof(UI_Victory_Popup), nameof(UI_Victory_Popup.Setup), new[] { typeof(bool), typeof(UI_Victory_Popup.eResultDetailType), typeof(UI_Victory_Popup.eShieldImageType) })]
         [HarmonyPostfix]
@@ -349,6 +445,7 @@ namespace EmberwardCoop.Patches
                     S.Board.ApplyBoardSnapshotBytes(boardBytes);
                 }
 
+                S.Balance.ApplyPendingRestoredBlockCounts();
                 CoopLogger.Info(LogCategory.Sync, "Battle Stage loaded — synchronizing all peers.");
                 S.ForceFullSyncAll();
             }

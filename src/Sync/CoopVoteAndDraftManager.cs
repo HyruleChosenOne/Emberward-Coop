@@ -89,6 +89,9 @@ namespace EmberwardCoop.Sync
         private bool _lastLocalBusy;
         private string _lastLocalBadge = "";
         private float _resolveCooldownUntil;
+        private bool _hostInVictorySequence;
+        private bool _clientInVictoryUpgradeSequence;
+        private float _clientVictoryStartTime;
 
         public CoopVoteAndDraftManager(NetworkManager net, Func<SessionController> session)
         {
@@ -108,9 +111,76 @@ namespace EmberwardCoop.Sync
             BarrierWaitNotice = "";
             _lastLocalBusy = false;
             _lastLocalBadge = "";
+            _hostInVictorySequence = false;
+            _clientInVictoryUpgradeSequence = false;
+            _clientVictoryStartTime = 0f;
             OnMapVotesChanged?.Invoke();
             OnSharedDraftChanged?.Invoke();
             OnDraftBarrierChanged?.Invoke();
+        }
+
+        public void ClearVictoryUpgradeState()
+        {
+            bool changed = _hostInVictorySequence || _clientInVictoryUpgradeSequence || HostForceContinueRequested;
+            _hostInVictorySequence = false;
+            _clientInVictoryUpgradeSequence = false;
+            _clientVictoryStartTime = 0f;
+            HostForceContinueRequested = false;
+            BarrierWaitNotice = "";
+            if (changed)
+            {
+                if (_net.IsHost)
+                {
+                    PeerDraftBarrier.Clear();
+                    foreach (var kv in _net.Roster)
+                        kv.Value.IsDraftingBusy = false;
+                    BroadcastDraftBarrierState();
+                }
+                else
+                {
+                    _lastLocalBusy = false;
+                    _lastLocalBadge = "";
+                }
+                OnDraftBarrierChanged?.Invoke();
+            }
+        }
+
+        public void OnHostVictorySequenceStarted()
+        {
+            if (!_net.IsHost || _hostInVictorySequence) return;
+            _hostInVictorySequence = true;
+            HostForceContinueRequested = false;
+
+            // Pre-mark remote peers busy on victory start so Host cannot leave before Clients open reward popups.
+            bool anyRemote = false;
+            foreach (var kv in _net.Roster)
+            {
+                if (kv.Key == 0) continue;
+                anyRemote = true;
+                PeerDraftBarrier[kv.Key] = (true, "Upgrades");
+                kv.Value.IsDraftingBusy = true;
+                kv.Value.ActiveModal = "Upgrades";
+            }
+
+            if (anyRemote)
+            {
+                _net.BroadcastRoster();
+                BroadcastDraftBarrierState();
+            }
+        }
+
+        public void OnClientVictorySequenceStarted()
+        {
+            if (!_net.IsClient || _clientInVictoryUpgradeSequence) return;
+            _clientInVictoryUpgradeSequence = true;
+            _clientVictoryStartTime = Time.unscaledTime;
+            _lastLocalBusy = true;
+            _lastLocalBadge = "Upgrades";
+            _net.SendToHost(PacketType.CmdDraftBarrierState, w =>
+            {
+                w.Write(true);
+                w.WriteSafeString("Upgrades");
+            });
         }
 
         public void ClearMapVotes()
@@ -1297,7 +1367,38 @@ namespace EmberwardCoop.Sync
             bool busy = false;
             string badge = "";
 
-            if (s.Ruleset.AllowsClientIndependentDraftsAndShops && (GameRefs.IsInMap || GameRefs.IsInBattle))
+            if (_net.IsClient && _clientInVictoryUpgradeSequence)
+            {
+                if (!GameRefs.IsInBattle)
+                {
+                    _clientInVictoryUpgradeSequence = false;
+                }
+                else
+                {
+                    var topKind = s.Modals.DetectLocalTopModal();
+                    bool blockingModalOpen = IsBlockingDraftOrShopModal(topKind);
+                    bool victoryButtonsReady = false;
+                    try
+                    {
+                        var vic = GameRefs.GetVictoryPopup();
+                        if (vic != null && vic.gameObject.activeInHierarchy && vic.canvasGroup_Buttons != null)
+                            victoryButtonsReady = vic.canvasGroup_Buttons.alpha >= 0.85f && vic.canvasGroup_Buttons.interactable;
+                    }
+                    catch { }
+
+                    bool pastGrace = (Time.unscaledTime - _clientVictoryStartTime) >= 1.5f;
+                    if (!blockingModalOpen && victoryButtonsReady && pastGrace)
+                    {
+                        _clientInVictoryUpgradeSequence = false;
+                    }
+                    else
+                    {
+                        busy = true;
+                        badge = blockingModalOpen ? ModalAndRewardSync.GetShortBadge(topKind) : "Upgrades";
+                    }
+                }
+            }
+            else if (s.Ruleset.AllowsClientIndependentDraftsAndShops && (GameRefs.IsInMap || GameRefs.IsInBattle))
             {
                 var topKind = s.Modals.DetectLocalTopModal();
                 if (IsBlockingDraftOrShopModal(topKind))
@@ -1343,13 +1444,18 @@ namespace EmberwardCoop.Sync
             kind == CoopModalKind.MiniWorkshop ||
             kind == CoopModalKind.RuneForge ||
             kind == CoopModalKind.Altar ||
+            kind == CoopModalKind.AltarEffectReward ||
             kind == CoopModalKind.Campsite ||
             kind == CoopModalKind.Circus ||
             kind == CoopModalKind.Academy ||
+            kind == CoopModalKind.AcademyPerkReward ||
             kind == CoopModalKind.SecretVault ||
             kind == CoopModalKind.QuestSelect ||
             kind == CoopModalKind.QuestReward ||
-            kind == CoopModalKind.RoguelitePerk;
+            kind == CoopModalKind.RoguelitePerk ||
+            kind == CoopModalKind.StageUpgradeUnlock ||
+            kind == CoopModalKind.KingUpgrade ||
+            kind == CoopModalKind.ScrapMasterUpgrade;
 
         public void HandleCmdDraftBarrierState(int senderId, BinaryReader r)
         {
@@ -1417,15 +1523,29 @@ namespace EmberwardCoop.Sync
             return names.Count > 0;
         }
 
+        public bool IsHostVictoryTransitionGated(out string busyNames)
+        {
+            busyNames = "";
+            if (!_net.IsHost || !GameRefs.IsInBattle || !_hostInVictorySequence || HostForceContinueRequested)
+                return false;
+            return AnyRemotePeerDrafting(out busyNames);
+        }
+
         public bool CanHostAdvancePastBarrier(out string blockReason)
         {
             blockReason = "";
-            if (!_net.IsHost) return true;
-            var s = _session();
-            if (s == null || !s.Ruleset.AllowsClientIndependentDraftsAndShops || HostForceContinueRequested)
-                return true;
+            if (!_net.IsHost || HostForceContinueRequested) return true;
 
-            if (AnyRemotePeerDrafting(out string busyNames))
+            if (IsHostVictoryTransitionGated(out string vicBusy))
+            {
+                blockReason = CoopLoc.F("victory.waiting_client_upgrades", vicBusy);
+                BarrierWaitNotice = blockReason;
+                OnDraftBarrierChanged?.Invoke();
+                return false;
+            }
+
+            var s = _session();
+            if (s != null && s.Ruleset.AllowsClientIndependentDraftsAndShops && AnyRemotePeerDrafting(out string busyNames))
             {
                 blockReason = CoopLoc.F("draft.waiting_peers", busyNames);
                 BarrierWaitNotice = blockReason;

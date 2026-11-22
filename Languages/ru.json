@@ -277,7 +277,7 @@
   "modcfg.auto_collapse_hud": "Сворачивать HUD группы в бою:",
   "modcfg.show_cursors": "3D-курсоры и имена союзников:",
   "modcfg.show_ghosts": "Предпросмотр постройки союзников:",
-  "modcfg.ownership_rings": "Кольца владельцев башен:",
+  "modcfg.ownership_rings": "Контуры владельца башен:",
   "modcfg.own_always": "Всегда",
   "modcfg.own_hover": "При наведении",
   "modcfg.own_off": "Выкл.",
@@ -286,5 +286,11 @@
   "modcfg.scale_large": "Крупный",
   "modcfg.ready_sound": "Звуковой сигнал готовности:",
   "modcfg.lock_cam_radial": "Блокировать камеру в круговом меню:",
-  "modcfg.reset_keybinds": "Сбросить клавиши по умолчанию"
+  "modcfg.reset_keybinds": "Сбросить клавиши по умолчанию",
+  "hud.owner_only_upgrade": "Только {0} может улучшать эту башню",
+  "hud.blocks_remaining": "Блоков осталось: {0}/{1}",
+  "hud.block_limit_reached": "Лимит блоков достигнут ({0}/{1} в этом ходу)",
+  "settings.val_per_player_cap": "{0} / Игрок",
+  "transition.waiting_for_host": "Ожидание хоста...",
+  "victory.waiting_client_upgrades": "Ожидание завершения улучшений игрока {0}..."
 }

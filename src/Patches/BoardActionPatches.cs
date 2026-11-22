@@ -13,6 +13,9 @@ namespace EmberwardCoop.Patches
     {
         private static SessionController S => SessionController.Instance;
 
+        private static bool _pendingHostTowerPlacement;
+        private static Vector3 _pendingHostTowerEuler;
+
         [HarmonyPatch(typeof(ObjectPlacementHandler), nameof(ObjectPlacementHandler.OnConfirmPlacement), new[] { typeof(bool) })]
         [HarmonyPrefix]
         public static bool ObjectPlacementHandler_OnConfirmPlacement_Prefix(ObjectPlacementHandler __instance, bool doContinuousBuild)
@@ -31,7 +34,7 @@ namespace EmberwardCoop.Patches
             Vector3 finalEuler = __instance.targetPlacementRotation;
 
             var tetrisCheck = __instance.curPlacementPrefab.GetComponent<Obj_TetrisBlock>();
-            if (tetrisCheck != null && !S.Balance.CanPlaceBlockNow(out string denyReason))
+            if (tetrisCheck != null && !S.Balance.CanPlaceBlockNow(S.Net.LocalPlayerId, out string denyReason))
             {
                 GameRefs.ShowGameToast(denyReason, 2.5f);
                 __instance.PlayAnim_PlacementError();
@@ -81,6 +84,8 @@ namespace EmberwardCoop.Patches
                     {
                         using (NetworkScope.Enter()) ig.OnRequestRemoveCardFromHand(__instance.currentPlacementCardData);
                     }
+                    // Optimistic local increment prevents rapid double-clicks from exceeding the per-player cap before Host echoes EvtTurnBlockCount.
+                    S.Balance.IncrementTurnBlockCount(S.Net.LocalPlayerId);
                     S.Board.ClientSendPlaceTetris(__instance.currentPlacementCardData, tetrisCheck.itemType, finalPos, finalEuler);
                     GameStateController.Instance?.OnRequestChangeGameState(eGameState.NORMAL_MODE);
                     __instance.OnCancelPlacement();
@@ -94,20 +99,27 @@ namespace EmberwardCoop.Patches
                 var tower = __instance.curPlacementPrefab.GetComponent<ABaseTower>();
                 if (tower?.SettingData != null)
                 {
-                    S.Board.BroadcastEvtPlaceTower(0, tower.SettingData.itemType, finalPos, finalEuler);
-                    S.Economy.MarkDirty();
+                    _pendingHostTowerPlacement = true;
+                    _pendingHostTowerEuler = finalEuler;
                 }
                 else if (tetrisCheck != null)
                 {
                     var cInfo = GameSerializers.CaptureCard(__instance.currentPlacementCardData);
                     cInfo.ItemType = (int)tetrisCheck.itemType;
                     cInfo.IsTetris = true;
-                    S.Balance.IncrementTurnBlockCount();
+                    S.Balance.IncrementTurnBlockCount(0);
                     S.Board.BroadcastEvtPlaceTetris(0, tetrisCheck.itemType, finalPos, finalEuler, cInfo);
                     S.Economy.MarkDirty();
                 }
             }
             return true;
+        }
+
+        [HarmonyPatch(typeof(ObjectPlacementHandler), nameof(ObjectPlacementHandler.OnConfirmPlacement), new[] { typeof(bool) })]
+        [HarmonyPostfix]
+        public static void ObjectPlacementHandler_OnConfirmPlacement_Postfix()
+        {
+            _pendingHostTowerPlacement = false;
         }
 
         [HarmonyPatch(typeof(TowerManager), nameof(TowerManager.RegisterTower), new[] { typeof(ABaseTower) })]
@@ -116,7 +128,28 @@ namespace EmberwardCoop.Patches
         {
             if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying || tower == null) return;
             if (S.Net.IsHost)
-                S.Ownership.StampTowerOwner(tower, 0);
+            {
+                int netId = S.Ownership.AllocateTowerNetId();
+                S.Ownership.StampTowerOwner(tower, 0, netId);
+
+                if (_pendingHostTowerPlacement)
+                {
+                    _pendingHostTowerPlacement = false;
+                    if (tower.SettingData != null)
+                    {
+                        S.Board.BroadcastEvtPlaceTower(0, netId, tower.SettingData.itemType, tower.transform.position, _pendingHostTowerEuler);
+                        S.Economy.MarkDirty();
+                    }
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(TowerManager), nameof(TowerManager.UnregisterTower), new[] { typeof(ABaseTower) })]
+        [HarmonyPostfix]
+        public static void TowerManager_UnregisterTower_Postfix(ABaseTower tower)
+        {
+            if (S != null && S.Net.IsConnected && tower != null)
+                S.Ownership.UnregisterTower(tower);
         }
 
         [HarmonyPatch(typeof(TetrisManager), nameof(TetrisManager.RegisterTetris), new[] { typeof(Obj_TetrisBlock) })]
@@ -128,7 +161,6 @@ namespace EmberwardCoop.Patches
                 S.Ownership.StampBlockOwner(tetris, 0);
         }
 
-        // Hide modification controls when inspecting another player's tower in Separate mode.
         [HarmonyPatch(typeof(UI_TowerControl), nameof(UI_TowerControl.UpdateUIContent), new[] { typeof(ABaseTower) })]
         [HarmonyPostfix]
         public static void UI_TowerControl_UpdateUIContent_Postfix(UI_TowerControl __instance, ABaseTower tower)
@@ -137,18 +169,43 @@ namespace EmberwardCoop.Patches
             if (!S.Ruleset.EnforcesEntityOwnership) return;
 
             int ownerId = S.Ownership.GetTowerOwner(tower);
+            bool canUpgrade = S.Ruleset.CanPlayerUpgradeTower(S.Net.LocalPlayerId, tower);
             bool canModify = S.Ruleset.CanPlayerModifyTower(S.Net.LocalPlayerId, tower);
+
+            if (!canUpgrade)
+            {
+                if (__instance.node_UpgradeButton != null) __instance.node_UpgradeButton.gameObject.SetActive(false);
+                if (__instance.node_Upgrade != null) __instance.node_Upgrade.gameObject.SetActive(false);
+                __instance.isUpgradeMenuOpen = false;
+                if (__instance.button_Upgrade != null) __instance.button_Upgrade.interactable = false;
+                try { __instance.ToggleUpgradeButtonsClickable(false); } catch { }
+                if (__instance.list_UpgradeButtons != null)
+                {
+                    for (int i = 0; i < __instance.list_UpgradeButtons.Count; i++)
+                    {
+                        var ub = __instance.list_UpgradeButtons[i];
+                        if (ub?.button != null) ub.button.interactable = false;
+                    }
+                }
+            }
+            else if (__instance.button_Upgrade != null)
+            {
+                __instance.button_Upgrade.interactable = true;
+            }
 
             if (!canModify)
             {
-                if (__instance.node_UpgradeButton != null) __instance.node_UpgradeButton.gameObject.SetActive(false);
                 if (__instance.node_Sell != null) __instance.node_Sell.gameObject.SetActive(false);
                 if (__instance.node_TargetPriority != null) __instance.node_TargetPriority.gameObject.SetActive(false);
+                if (__instance.node_ScrapTankEnhanceLimit != null) __instance.node_ScrapTankEnhanceLimit.SetActive(false);
                 if (__instance.node_RerollDiceTower != null) __instance.node_RerollDiceTower.SetActive(false);
                 if (__instance.node_DrillTowerExtraButton != null) __instance.node_DrillTowerExtraButton.SetActive(false);
                 if (__instance.node_ForceActivateTower != null) __instance.node_ForceActivateTower.gameObject.SetActive(false);
                 if (__instance.node_ScorchTowerControl != null) __instance.node_ScorchTowerControl.SetActive(false);
+            }
 
+            if (!canUpgrade || !canModify)
+            {
                 if (__instance.text_TowerName != null)
                 {
                     string ownerName = S.Net.GetPlayerName(ownerId);
@@ -160,6 +217,28 @@ namespace EmberwardCoop.Patches
                         __instance.text_TowerName.text = $"{cur}\n<size=68%><color=#{hex}>{ownedTag}</color></size>";
                 }
             }
+        }
+
+        [HarmonyPatch(typeof(UI_TowerControl), nameof(UI_TowerControl.OnTriggerKeybind), new[] { typeof(string) })]
+        [HarmonyPrefix]
+        public static bool UI_TowerControl_OnTriggerKeybind_Prefix(UI_TowerControl __instance, string keyName)
+        {
+            if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying || __instance?.curTower == null)
+                return true;
+
+            var tower = __instance.curTower;
+            bool canModify = S.Ruleset.CanPlayerModifyTower(S.Net.LocalPlayerId, tower);
+            if (!canModify) return false;
+
+            if (!S.Ruleset.CanPlayerUpgradeTower(S.Net.LocalPlayerId, tower) &&
+                !string.IsNullOrEmpty(keyName) &&
+                keyName.IndexOf("Upgrade", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                string ownerName = S.Net.GetPlayerName(S.Ownership.GetTowerOwner(tower));
+                GameRefs.ShowGameToast(CoopLoc.F("hud.owner_only_upgrade", ownerName), 1.8f);
+                return false;
+            }
+            return true;
         }
 
         [HarmonyPatch(typeof(Obj_TetrisBlock), nameof(Obj_TetrisBlock.Recall), new[] { typeof(bool) })]
@@ -185,12 +264,11 @@ namespace EmberwardCoop.Patches
             {
                 int ownerId = S.Ownership.GetBlockOwner(__instance);
                 S.Ownership.UnregisterBlock(__instance);
-                S.Balance.DecrementTurnBlockCount();
+                S.Balance.DecrementTurnBlockCount(ownerId >= 0 ? ownerId : 0);
                 S.Board.BroadcastEvtRecallTetris(0, pos, isForceRecall);
                 S.Economy.MarkDirty();
 
-                // In Separate Resources mode, deleting a disconnected client's block removes it cleanly from the grid
-                // without adding a duplicate block card into the Host's hand.
+                // Removing a disconnected teammate's block in Separate mode clears the grid without adding their card to Host's hand.
                 if (S.Ruleset.EnforcesEntityOwnership && ownerId != 0 && !S.Ownership.IsOwnerConnected(ownerId))
                 {
                     using (NetworkScope.Enter())
@@ -201,42 +279,75 @@ namespace EmberwardCoop.Patches
             return true;
         }
 
-        [HarmonyPatch(typeof(UI_TowerControl), nameof(UI_TowerControl.RequestUpgradeTower), new[] { typeof(ABaseTower.eUpgradeType) })]
-        [HarmonyPrefix]
-        public static bool UI_TowerControl_Upgrade_Prefix(UI_TowerControl __instance, ABaseTower.eUpgradeType upgradeType)
+        private static bool TryHandleLocalUpgradeRequest(ABaseTower tower, ABaseTower.eUpgradeType upgradeType)
         {
-            if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying) return true;
-            var tower = __instance.curTower;
-            if (tower == null) return true;
+            if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying || tower == null) return true;
 
-            if (!S.Ruleset.CanPlayerModifyTower(S.Net.LocalPlayerId, tower))
+            if (!S.Ruleset.CanPlayerUpgradeTower(S.Net.LocalPlayerId, tower))
             {
-                GameRefs.ShowGameToast(CoopLoc.F("hud.owned_by", S.Net.GetPlayerName(S.Ownership.GetTowerOwner(tower))), 1.8f);
+                string ownerName = S.Net.GetPlayerName(S.Ownership.GetTowerOwner(tower));
+                GameRefs.ShowGameToast(CoopLoc.F("hud.owner_only_upgrade", ownerName), 1.8f);
                 return false;
             }
 
             if (S.Net.IsClient)
             {
+                if (tower.IsMaxLevel() || S.Board.HasPendingClientUpgrade(tower))
+                    return false;
+
                 if (S.Ruleset.ClientSpendsOwnResourcesOnBuild)
                 {
                     var ig = MainGame.Instance?.IngameData;
                     int cost = tower.GetUpgradeCost(upgradeType);
-                    if (ig == null || !ig.IsCoinEnough(cost)) return false;
-                    using (NetworkScope.Enter()) ig.AddCoin(-cost);
+                    if (ig == null || !ig.IsCoinEnough(cost))
+                        return false;
                 }
-                S.Board.ClientSendUpgradeTower(tower.transform.position, upgradeType);
+
+                S.Board.ClientSendUpgradeTower(tower, upgradeType);
                 return false;
             }
-            if (S.Net.IsHost)
-            {
-                var ig = MainGame.Instance?.IngameData;
-                if (ig != null && ig.IsCoinEnough(tower.GetUpgradeCost(upgradeType)))
-                {
-                    S.Board.BroadcastEvtUpgradeTower(0, tower.transform.position, upgradeType);
-                    S.Economy.MarkDirty();
-                }
-            }
+
             return true;
+        }
+
+        // UI_TowerControl.RequestUpgradeTower is inlined in GameAssembly; intercept all live upgrade entry points instead.
+        [HarmonyPatch(typeof(UI_TowerControl), nameof(UI_TowerControl.OnUpgradeButtonClick), new[] { typeof(ABaseTower.eUpgradeType) })]
+        [HarmonyPrefix]
+        public static bool UI_TowerControl_OnUpgradeButtonClick_Prefix(UI_TowerControl __instance, ABaseTower.eUpgradeType upgradeType)
+            => TryHandleLocalUpgradeRequest(__instance?.curTower, upgradeType);
+
+        [HarmonyPatch(typeof(TowerManager), nameof(TowerManager.OnRequestUpgradeTower), new[] { typeof(ABaseTower), typeof(ABaseTower.eUpgradeType), typeof(bool) })]
+        [HarmonyPrefix]
+        public static bool TowerManager_OnRequestUpgradeTower_Prefix(ABaseTower tower, ABaseTower.eUpgradeType upgradeType, bool isFromPlayer)
+        {
+            if (!isFromPlayer) return true;
+            return TryHandleLocalUpgradeRequest(tower, upgradeType);
+        }
+
+        [HarmonyPatch(typeof(ABaseTower), nameof(ABaseTower.Upgrade), new[] { typeof(ABaseTower.eUpgradeType), typeof(bool), typeof(bool), typeof(bool), typeof(bool) })]
+        [HarmonyPrefix]
+        public static bool ABaseTower_Upgrade_Prefix(ABaseTower __instance, ABaseTower.eUpgradeType upgradeType, bool isFromPlayer, out int __state)
+        {
+            __state = __instance != null ? __instance.Level : 0;
+            if (!isFromPlayer) return true;
+            return TryHandleLocalUpgradeRequest(__instance, upgradeType);
+        }
+
+        [HarmonyPatch(typeof(ABaseTower), nameof(ABaseTower.Upgrade), new[] { typeof(ABaseTower.eUpgradeType), typeof(bool), typeof(bool), typeof(bool), typeof(bool) })]
+        [HarmonyPostfix]
+        public static void ABaseTower_Upgrade_Postfix(ABaseTower __instance, int __state)
+        {
+            if (S == null || !S.Net.IsConnected || __instance == null) return;
+            if (__instance.Level <= __state) return;
+
+            S.Ownership.OnTowerUpgraded(__instance);
+
+            if (S.Net.IsHost && !NetworkScope.IsApplying)
+            {
+                int netId = S.Ownership.GetTowerNetId(__instance);
+                S.Board.BroadcastEvtUpgradeTower(0, netId, __instance.transform.position, __instance.UpgradeType, __instance.Level, __instance.UpgradeSpentCost, 0);
+                S.Economy.MarkDirty();
+            }
         }
 
         [HarmonyPatch(typeof(UI_TowerControl), nameof(UI_TowerControl.OnClickButtonSell), new Type[0])]

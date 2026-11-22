@@ -115,7 +115,7 @@ namespace EmberwardCoop.Core
 
             ShowTeammateCursors = config.Bind("Presence", "ShowTeammateCursors", true, "Render 3D ground cursors and nameplates for connected teammates.");
             EnableGhostPreviews = config.Bind("Presence", "EnableGhostPreviews", true, "Render translucent ghost previews of teammates' hovered tetrominoes and towers.");
-            OwnershipIndicatorMode = config.Bind("Presence", "OwnershipIndicatorMode", OwnershipDisplayMode.Always, "Controls when tower ownership base rings are shown in Separate Resources mode: Always, HoverOnly, or Off.");
+            OwnershipIndicatorMode = config.Bind("Presence", "OwnershipIndicatorMode", OwnershipDisplayMode.Always, "Controls when player-colored tower outlines are shown: Always, HoverOnly, or Off.");
             EnableSpatialFeedback = config.Bind("Presence", "EnableSpatialFeedback", true, "Play particles, floating callouts, and audio cues for teammate actions and pings.");
             MuteTeammateStickers = config.Bind("Presence", "MuteTeammateStickers", false, "Mute incoming teammate stickers, pings, and quick-callout popups.");
             PingStickerScalePreset = config.Bind("Presence", "PingStickerScalePreset", VisualScalePreset.Normal, "Size preset for world-space and HUD pings and stickers (Small, Normal, Large).");

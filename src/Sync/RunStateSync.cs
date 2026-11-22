@@ -3,11 +3,15 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using EmberwardCoop.Core;
+using EmberwardCoop.Localization;
 using EmberwardCoop.Networking;
 using EmberwardCoop.Rules;
 using EmberwardCoop.Serialization;
+using EmberwardCoop.UI;
+using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 namespace EmberwardCoop.Sync
 {
@@ -42,6 +46,12 @@ namespace EmberwardCoop.Sync
         private string _pendingSceneToLoad = "";
         private bool _wasClientConnected;
 
+        private readonly Dictionary<int, string> _cachedButtonLabels = new Dictionary<int, string>();
+        private GameObject _hostVictoryGateBannerObj;
+        private TMP_Text _hostVictoryGateBannerText;
+        private bool _lastHostVictoryGated;
+        private string _lastHostVictoryBusyNames = "";
+
         public Dictionary<int, int> MapNodeVotes => _session()?.Votes.MapNodeVotes;
         public event Action OnMapVotesChanged;
 
@@ -69,6 +79,10 @@ namespace EmberwardCoop.Sync
             MenuLockDirty = true;
             _runDirty = false;
             _lastRunHash = 0;
+            _cachedButtonLabels.Clear();
+            DestroyHostVictoryGateBanner();
+            _lastHostVictoryGated = false;
+            _lastHostVictoryBusyNames = "";
             SoloSaveGuard.ExitCoopTempSession();
         }
 
@@ -89,6 +103,8 @@ namespace EmberwardCoop.Sync
                 if (!string.IsNullOrEmpty(activeScene) && activeScene != "LoadingScene")
                     HostTargetScene = activeScene;
 
+                UpdateHostVictoryTransitionGate(activeScene);
+
                 if (_net.RemotePeerCount > 0 && (_runDirty || (activeScene != "MainGame" && now - _lastRunCheckTime >= 0.4f)))
                 {
                     _lastRunCheckTime = now;
@@ -107,6 +123,155 @@ namespace EmberwardCoop.Sync
             }
         }
 
+        private void SetClientTransitionButtonLocked(Button btn, bool locked)
+        {
+            if (btn == null) return;
+            GameRefs.SetButtonLocked(btn, locked);
+            var tmp = btn.GetComponentInChildren<TMP_Text>(true);
+            if (tmp == null) return;
+
+            int id = btn.GetInstanceID();
+            if (locked)
+            {
+                if (!_cachedButtonLabels.ContainsKey(id))
+                    _cachedButtonLabels[id] = tmp.text ?? "";
+                string waiting = CoopLoc.T("transition.waiting_for_host");
+                if (tmp.text != waiting)
+                    tmp.text = waiting;
+            }
+            else if (_cachedButtonLabels.TryGetValue(id, out string orig))
+            {
+                tmp.text = orig;
+                _cachedButtonLabels.Remove(id);
+            }
+        }
+
+        private void RestoreAllClientTransitionButtons()
+        {
+            var vic = GameRefs.GetVictoryPopup();
+            if (vic != null)
+            {
+                SetClientTransitionButtonLocked(vic.button_Continue, false);
+                SetClientTransitionButtonLocked(vic.button_BackToMenu, false);
+                SetClientTransitionButtonLocked(vic.button_MoreWaves, false);
+                SetClientTransitionButtonLocked(vic.button_MoreLevels, false);
+            }
+
+            var def = GameRefs.GetDefeatPopup();
+            if (def != null)
+            {
+                SetClientTransitionButtonLocked(def.button_BackToTitle, false);
+                SetClientTransitionButtonLocked(def.button_Retry, false);
+            }
+            _cachedButtonLabels.Clear();
+        }
+
+        private void DestroyHostVictoryGateBanner()
+        {
+            if (_hostVictoryGateBannerObj != null)
+            {
+                UnityEngine.Object.Destroy(_hostVictoryGateBannerObj);
+                _hostVictoryGateBannerObj = null;
+                _hostVictoryGateBannerText = null;
+            }
+        }
+
+        private void UpdateHostVictoryTransitionGate(string activeScene)
+        {
+            if (activeScene != "MainGame")
+            {
+                DestroyHostVictoryGateBanner();
+                _lastHostVictoryGated = false;
+                _lastHostVictoryBusyNames = "";
+                return;
+            }
+
+            var vic = GameRefs.GetVictoryPopup();
+            if (vic == null || !vic.gameObject.activeInHierarchy)
+            {
+                if (_hostVictoryGateBannerObj != null && _hostVictoryGateBannerObj.activeSelf)
+                    _hostVictoryGateBannerObj.SetActive(false);
+                _lastHostVictoryGated = false;
+                _lastHostVictoryBusyNames = "";
+                return;
+            }
+
+            string busyNames = "";
+            bool gated = _session()?.Votes.IsHostVictoryTransitionGated(out busyNames) ?? false;
+            if (!gated && !_lastHostVictoryGated)
+                return;
+
+            bool buttonsRevealed = vic.canvasGroup_Buttons != null && vic.canvasGroup_Buttons.alpha >= 0.5f;
+
+            if (gated)
+            {
+                GameRefs.SetButtonLocked(vic.button_Continue, true);
+                GameRefs.SetButtonLocked(vic.button_BackToMenu, true);
+                GameRefs.SetButtonLocked(vic.button_MoreWaves, true);
+                GameRefs.SetButtonLocked(vic.button_MoreLevels, true);
+
+                if (buttonsRevealed)
+                {
+                    if (_hostVictoryGateBannerObj == null)
+                    {
+                        _hostVictoryGateBannerObj = NativeStyleProvider.CreatePanel(
+                            vic.transform,
+                            "EWCoop_HostVictoryGateBanner",
+                            NativeStyleProvider.TooltipBg,
+                            addBorder: true,
+                            roleOverride: PanelSurfaceRole.Tooltip);
+                        var rt = _hostVictoryGateBannerObj.GetComponent<RectTransform>();
+                        rt.anchorMin = new Vector2(0.5f, 0f);
+                        rt.anchorMax = new Vector2(0.5f, 0f);
+                        rt.pivot = new Vector2(0.5f, 0f);
+                        rt.anchoredPosition = new Vector2(0f, 174f);
+                        rt.sizeDelta = new Vector2(520f, 36f);
+
+                        var cg = _hostVictoryGateBannerObj.AddComponent<CanvasGroup>();
+                        cg.blocksRaycasts = false;
+                        cg.interactable = false;
+
+                        var hlg = _hostVictoryGateBannerObj.AddComponent<HorizontalLayoutGroup>();
+                        hlg.padding = new RectOffset(16, 16, 6, 6);
+                        hlg.childControlWidth = true;
+                        hlg.childControlHeight = true;
+                        var fit = _hostVictoryGateBannerObj.AddComponent<ContentSizeFitter>();
+                        fit.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+                        fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+                        _hostVictoryGateBannerText = NativeStyleProvider.CreateLabel(
+                            _hostVictoryGateBannerObj.transform,
+                            "",
+                            13f,
+                            NativeStyleProvider.EmberGold,
+                            TextAlignmentOptions.Center,
+                            FontStyles.Bold,
+                            addShadow: true);
+                    }
+
+                    if (!_hostVictoryGateBannerObj.activeSelf)
+                        _hostVictoryGateBannerObj.SetActive(true);
+                    if (_hostVictoryGateBannerText != null && busyNames != _lastHostVictoryBusyNames)
+                    {
+                        _lastHostVictoryBusyNames = busyNames;
+                        _hostVictoryGateBannerText.text = CoopLoc.F("victory.waiting_client_upgrades", busyNames);
+                    }
+                }
+            }
+            else if (_lastHostVictoryGated)
+            {
+                GameRefs.SetButtonLocked(vic.button_Continue, false);
+                GameRefs.SetButtonLocked(vic.button_BackToMenu, false);
+                GameRefs.SetButtonLocked(vic.button_MoreWaves, false);
+                GameRefs.SetButtonLocked(vic.button_MoreLevels, false);
+                if (_hostVictoryGateBannerObj != null && _hostVictoryGateBannerObj.activeSelf)
+                    _hostVictoryGateBannerObj.SetActive(false);
+                _lastHostVictoryBusyNames = "";
+            }
+
+            _lastHostVictoryGated = gated;
+        }
+
         private void UpdateClientProtectionAndMenuLocks(string activeScene, bool isClient)
         {
             if (isClient && !_wasClientConnected)
@@ -119,6 +284,7 @@ namespace EmberwardCoop.Sync
             {
                 _wasClientConnected = false;
                 _pendingSceneToLoad = "";
+                RestoreAllClientTransitionButtons();
                 if (!_net.IsConnected)
                     SoloSaveGuard.ExitCoopTempSession();
 
@@ -169,17 +335,17 @@ namespace EmberwardCoop.Sync
                 var vic = GameRefs.GetVictoryPopup();
                 if (vic != null && vic.gameObject.activeInHierarchy)
                 {
-                    GameRefs.SetButtonLocked(vic.button_Continue, true);
-                    GameRefs.SetButtonLocked(vic.button_BackToMenu, true);
-                    GameRefs.SetButtonLocked(vic.button_MoreWaves, true);
-                    GameRefs.SetButtonLocked(vic.button_MoreLevels, true);
+                    SetClientTransitionButtonLocked(vic.button_Continue, true);
+                    SetClientTransitionButtonLocked(vic.button_BackToMenu, true);
+                    SetClientTransitionButtonLocked(vic.button_MoreWaves, true);
+                    SetClientTransitionButtonLocked(vic.button_MoreLevels, true);
                 }
 
                 var def = GameRefs.GetDefeatPopup();
                 if (def != null && def.gameObject.activeInHierarchy)
                 {
-                    GameRefs.SetButtonLocked(def.button_BackToTitle, true);
-                    GameRefs.SetButtonLocked(def.button_Retry, true);
+                    SetClientTransitionButtonLocked(def.button_BackToTitle, true);
+                    SetClientTransitionButtonLocked(def.button_Retry, true);
                 }
             }
         }

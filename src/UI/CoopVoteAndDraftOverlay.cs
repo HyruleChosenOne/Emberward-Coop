@@ -321,9 +321,11 @@ namespace EmberwardCoop.UI
         private void TickDraftBarrier()
         {
             string busyNames = "";
-            bool anyBusy = _session.Ruleset.AllowsClientIndependentDraftsAndShops
-                && Net.RemotePeerCount > 0
-                && Votes.AnyRemotePeerDrafting(out busyNames);
+            bool victoryGated = Votes.IsHostVictoryTransitionGated(out string vicBusy);
+            bool anyBusy = victoryGated
+                || (_session.Ruleset.AllowsClientIndependentDraftsAndShops
+                    && Net.RemotePeerCount > 0
+                    && Votes.AnyRemotePeerDrafting(out busyNames));
 
             if (!anyBusy)
             {
@@ -332,10 +334,13 @@ namespace EmberwardCoop.UI
             }
 
             if (!_barrierStrip.activeSelf) _barrierStrip.SetActive(true);
-            if (_barrierDirty)
+            string expectedText = victoryGated
+                ? CoopLoc.F("victory.waiting_client_upgrades", vicBusy)
+                : CoopLoc.F("draft.waiting_peers", busyNames);
+            if (_barrierDirty || _barrierText.text != expectedText)
             {
                 _barrierDirty = false;
-                _barrierText.text = CoopLoc.F("draft.waiting_peers", busyNames);
+                _barrierText.text = expectedText;
                 _barrierForceBtnObj.SetActive(Net.IsHost);
             }
         }

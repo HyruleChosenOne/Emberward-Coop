@@ -1244,7 +1244,7 @@ namespace EmberwardCoop.UI
             _lblBlockPacing = AddStepperRow(rightCol.transform, "settings.block_pacing", () =>
             {
                 if (Settings.BlockPacing == BlockPacingRule.IndependentHandCap) Settings.BlockPacing = BlockPacingRule.SharedTurnBlockCap;
-                else if (Settings.SharedTurnBlockCap > 2) Settings.SharedTurnBlockCap--;
+                else if (Settings.SharedTurnBlockCap > 1) Settings.SharedTurnBlockCap--;
                 else Settings.BlockPacing = BlockPacingRule.IndependentHandCap;
                 MarkCustomAndBroadcast();
             }, () =>
@@ -2174,7 +2174,7 @@ namespace EmberwardCoop.UI
             _lblStartGold.text = Settings.StartingGold == StartingGoldRule.BalancedSplit ? CoopLoc.T("settings.val_balanced_split") : CoopLoc.T("settings.val_full_each");
             _lblWaveIncome.text = $"{Mathf.RoundToInt(Settings.WaveIncomeMultiplier * 100)}%";
             _lblBlockPacing.text = Settings.BlockPacing == BlockPacingRule.SharedTurnBlockCap
-                ? $"Cap: {Settings.SharedTurnBlockCap}"
+                ? CoopLoc.F("settings.val_per_player_cap", Settings.SharedTurnBlockCap)
                 : CoopLoc.T("settings.val_independent");
             _lblGifting.text = !Settings.AllowResourceGifting
                 ? CoopLoc.T("settings.val_disabled")

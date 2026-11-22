@@ -277,7 +277,7 @@
   "modcfg.auto_collapse_hud": "Ocultar HUD de grupo en combate:",
   "modcfg.show_cursors": "Mostrar cursores 3D de aliados:",
   "modcfg.show_ghosts": "Mostrar vista previa de construcción:",
-  "modcfg.ownership_rings": "Anillos de propiedad de torres:",
+  "modcfg.ownership_rings": "Contornos de propiedad de torres:",
   "modcfg.own_always": "Siempre",
   "modcfg.own_hover": "Al apuntar",
   "modcfg.own_off": "No",
@@ -286,5 +286,11 @@
   "modcfg.scale_large": "Grande",
   "modcfg.ready_sound": "Sonido de confirmación Listo:",
   "modcfg.lock_cam_radial": "Bloquear cámara en menús radiales:",
-  "modcfg.reset_keybinds": "Restablecer atajos"
+  "modcfg.reset_keybinds": "Restablecer atajos",
+  "hud.owner_only_upgrade": "Solo {0} puede mejorar esta torre",
+  "hud.blocks_remaining": "Bloques restantes: {0}/{1}",
+  "hud.block_limit_reached": "Límite de bloques alcanzado ({0}/{1} este turno)",
+  "settings.val_per_player_cap": "{0} / Jugador",
+  "transition.waiting_for_host": "Esperando al anfitrión...",
+  "victory.waiting_client_upgrades": "Esperando a que {0} termine las mejoras..."
 }

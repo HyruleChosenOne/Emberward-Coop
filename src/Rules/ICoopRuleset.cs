@@ -17,6 +17,7 @@ namespace EmberwardCoop.Rules
         bool SupportsResourceGifting { get; }
 
         bool CanPlayerModifyTower(int playerId, ABaseTower tower);
+        bool CanPlayerUpgradeTower(int playerId, ABaseTower tower);
         bool CanPlayerRecallBlock(int playerId, Obj_TetrisBlock block);
         int ComputeStartingGold(int baseCoin, int playerCount);
         int ComputeScaledIncome(int positiveDelta, int playerCount);
@@ -41,6 +42,7 @@ namespace EmberwardCoop.Rules
         public bool SupportsResourceGifting => false;
 
         public bool CanPlayerModifyTower(int playerId, ABaseTower tower) => true;
+        public bool CanPlayerUpgradeTower(int playerId, ABaseTower tower) => true;
         public bool CanPlayerRecallBlock(int playerId, Obj_TetrisBlock block) => true;
         public int ComputeStartingGold(int baseCoin, int playerCount) => baseCoin;
         public int ComputeScaledIncome(int positiveDelta, int playerCount) => positiveDelta;
@@ -74,6 +76,14 @@ namespace EmberwardCoop.Rules
             if (tower == null) return false;
             int owner = _ownership.GetTowerOwner(tower);
             return owner < 0 || owner == playerId || (playerId == 0 && !_ownership.IsOwnerConnected(owner));
+        }
+
+        // Strict owner-only upgrades in Separate Resources mode (disconnected fallback applies only to deletion/recall).
+        public bool CanPlayerUpgradeTower(int playerId, ABaseTower tower)
+        {
+            if (tower == null) return false;
+            int owner = _ownership.GetTowerOwner(tower);
+            return owner == playerId;
         }
 
         public bool CanPlayerRecallBlock(int playerId, Obj_TetrisBlock block)

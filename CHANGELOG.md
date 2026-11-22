@@ -12,12 +12,15 @@ Initial public release.
 - Added party-best mode, world, and difficulty unlock resolution from the most-progressed player in the lobby, plus a memory-only **Unlock All Maps/Modes (Co-op Only)** toggle in Mod Settings that never touches solo savefiles.
 
 ### Co-op Gameplay, Voting & Drafting
-- Added **Shared Resources** mode (unified gold, energy, core health, towers, cards, and relics) and **Separate Resources** mode (independent gold, hands, decks, and relics, per-player tower and block ownership with color rings, read-only inspection on teammate towers, and mid-run gold gifting).
+- Added **Shared Resources** mode (unified gold, energy, core health, towers, cards, and relics) and **Separate Resources** mode (independent gold, hands, decks, and relics, strict owner-only tower upgrades with read-only inspection and `"Owned by [Player]"` labels on teammate towers, and mid-run gold gifting).
 - Kept **Core Health** unified as a single shared pool across the party in both modes.
+- Added individual per-player turn block placement limits (default 3 per player per turn), tracked independently per peer, displayed in the Players HUD, and preserved across co-op save/load.
+- Added player-colored 3D tower outlines synced to each placing player's chosen color, persisting across tower upgrades and save/load and updating live on color changes.
+- Enforced host-only level transitions across victory, defeat, pause, and map screens (`Waiting for Host...` on locked client controls), and gated host level-exit buttons on stage clear until connected clients finish post-level upgrades or disconnect.
 - Integrated vanilla in-game Home hero/ember selection (host-selected and synced live to clients) and vanilla Academy, reward, shop, chest, altar, and campsite popups.
 - Added map-node voting (floating vote chips, consensus resolution, host tie-break/resolve), live shared draft voting and reroll requests in Shared Resources mode, and simultaneous deterministic per-player drafts/shops with a completion barrier in Separate Resources mode.
-- Added host-configurable difficulty and pacing rules (enemy HP, wave density, enemy speed, boss HP/armor, starting gold split, wave income multiplier, shared turn block cap, shared core HP bonus, gifting cap, draft sync mode, speed control, auto-scale), built-in presets (*Balanced Co-op*, *Casual*, *Tactical Hardcore*, *Chaos*), and custom JSON preset save/load.
-- Added run, map node, board, tower, tetromino, rune stone, chest, buff, quest, speed, pause, and victory/defeat synchronization with periodic state-hash checks.
+- Added host-configurable difficulty and pacing rules (enemy HP, wave density, enemy speed, boss HP/armor, starting gold split, wave income multiplier, per-player turn block cap, shared core HP bonus, gifting cap, draft sync mode, speed control, auto-scale), built-in presets (*Balanced Co-op*, *Casual*, *Tactical Hardcore*, *Chaos*), and custom JSON preset save/load.
+- Added authoritative run, map node, board, tower placement and upgrade, tetromino, rune stone, chest, buff, quest, speed, pause, and victory/defeat synchronization with periodic state-hash checks.
 - Added solo profile meta-progression commits for both host and clients (XP, stage/world clears, boss clear flags, tower/relic codex entries, and achievements) without touching solo active-run saves.
 - Added mid-wave disconnect auto-pause modal and post-run contribution breakdown overlay.
 

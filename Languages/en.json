@@ -277,7 +277,7 @@
   "modcfg.auto_collapse_hud": "Auto-Collapse Players HUD in Combat:",
   "modcfg.show_cursors": "Show Teammate 3D Cursors & Tags:",
   "modcfg.show_ghosts": "Show Teammate Placement Previews:",
-  "modcfg.ownership_rings": "Tower Ownership Rings:",
+  "modcfg.ownership_rings": "Tower Ownership Outlines:",
   "modcfg.own_always": "Always",
   "modcfg.own_hover": "Hover Only",
   "modcfg.own_off": "Off",
@@ -286,5 +286,11 @@
   "modcfg.scale_large": "Large",
   "modcfg.ready_sound": "Ready-Check Sound Cue:",
   "modcfg.lock_cam_radial": "Lock Camera in Radial Menus:",
-  "modcfg.reset_keybinds": "Reset Keybinds to Default"
+  "modcfg.reset_keybinds": "Reset Keybinds to Default",
+  "hud.owner_only_upgrade": "Only {0} can upgrade this tower",
+  "hud.blocks_remaining": "Blocks left: {0}/{1}",
+  "hud.block_limit_reached": "Block limit reached ({0}/{1} this turn)",
+  "settings.val_per_player_cap": "{0} / Player",
+  "transition.waiting_for_host": "Waiting for Host...",
+  "victory.waiting_client_upgrades": "Waiting for {0} to finish upgrades..."
 }

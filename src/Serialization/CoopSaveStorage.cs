@@ -219,6 +219,7 @@ namespace EmberwardCoop.Serialization
         public int RerollChance { get; set; }
         public int ReviveItem { get; set; }
         public int Coin { get; set; }
+        public int BlocksPlacedThisTurn { get; set; }
         public List<SavedTowerDto> LoadoutTowers { get; set; } = new List<SavedTowerDto>();
         public List<SavedTowerDto> CollectedTowers { get; set; } = new List<SavedTowerDto>();
         public List<SavedCardDto> StorageCards { get; set; } = new List<SavedCardDto>();
@@ -441,7 +442,8 @@ namespace EmberwardCoop.Serialization
                         SlotIndex = slot++,
                         PlayerName = peer.Name ?? $"Player {peer.PlayerId}",
                         ColorIndex = peer.ColorIndex,
-                        AvatarHeroId = peer.AvatarHeroId ?? "BASIC"
+                        AvatarHeroId = peer.AvatarHeroId ?? "BASIC",
+                        BlocksPlacedThisTurn = session.Balance.GetBlocksPlacedByPlayer(peer.PlayerId)
                     };
 
                     if (peer.PlayerId == 0)
@@ -633,6 +635,7 @@ namespace EmberwardCoop.Serialization
             w.Write(dto.RerollChance);
             w.Write(dto.ReviveItem);
             w.Write(dto.Coin);
+            w.Write(dto.BlocksPlacedThisTurn);
 
             w.Write(dto.LoadoutTowers?.Count ?? 0);
             if (dto.LoadoutTowers != null)
@@ -677,7 +680,8 @@ namespace EmberwardCoop.Serialization
                 Gem = r.ReadInt32(),
                 RerollChance = r.ReadInt32(),
                 ReviveItem = r.ReadInt32(),
-                Coin = r.ReadInt32()
+                Coin = r.ReadInt32(),
+                BlocksPlacedThisTurn = r.ReadInt32()
             };
 
             int lc = r.ReadBoundedCount(64);

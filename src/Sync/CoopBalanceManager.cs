@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using EmberwardCoop.Core;
+using EmberwardCoop.Localization;
 using EmberwardCoop.Networking;
 using EmberwardCoop.Rules;
+using EmberwardCoop.Serialization;
 using UnityEngine;
 
 namespace EmberwardCoop.Sync
@@ -12,7 +15,12 @@ namespace EmberwardCoop.Sync
         private readonly NetworkManager _net;
         private readonly Func<SessionController> _session;
 
-        public int BlocksPlacedThisTurn { get; private set; }
+        private readonly Dictionary<int, int> _blocksPlacedByPlayer = new Dictionary<int, int>();
+        private readonly Dictionary<string, int> _blocksPlacedByStableKey = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        // Consumed once when MainGame finishes loading a saved co-op run.
+        public Dictionary<int, int> PendingRestoreBlockCounts;
+
         public event Action OnTurnBlockCountChanged;
 
         private bool _waveDensityAppliedForStage;
@@ -25,24 +33,30 @@ namespace EmberwardCoop.Sync
 
         public void ResetForNewStage()
         {
-            BlocksPlacedThisTurn = 0;
+            _blocksPlacedByPlayer.Clear();
+            _blocksPlacedByStableKey.Clear();
             _waveDensityAppliedForStage = false;
             OnTurnBlockCountChanged?.Invoke();
         }
 
         public void ResetForNewTurn()
         {
-            BlocksPlacedThisTurn = 0;
+            _blocksPlacedByPlayer.Clear();
+            _blocksPlacedByStableKey.Clear();
             if (_net.IsHost) BroadcastTurnBlockCount();
             OnTurnBlockCountChanged?.Invoke();
         }
 
-        public bool IsSharedBlockCapActive()
+        public void ClearPendingRestoreCounts()
+        {
+            PendingRestoreBlockCounts = null;
+        }
+
+        public bool IsBlockCapActive()
         {
             var s = _session();
             if (s == null || !_net.IsConnected) return false;
-            return s.Settings.BlockPacing == BlockPacingRule.SharedTurnBlockCap
-                && s.Settings.EconomyMode == CoopEconomyMode.SeparateResources;
+            return s.Settings.BlockPacing == BlockPacingRule.SharedTurnBlockCap;
         }
 
         public int GetEffectiveTurnBlockCap()
@@ -51,31 +65,84 @@ namespace EmberwardCoop.Sync
             return s != null ? Math.Max(1, s.Settings.SharedTurnBlockCap) : 3;
         }
 
-        public bool CanPlaceBlockNow(out string denyReason)
+        public int GetBlocksPlacedByPlayer(int playerId)
+            => _blocksPlacedByPlayer.TryGetValue(playerId, out int count) ? Math.Max(0, count) : 0;
+
+        public int GetRemainingBlocksForPlayer(int playerId)
+            => Math.Max(0, GetEffectiveTurnBlockCap() - GetBlocksPlacedByPlayer(playerId));
+
+        private string ResolveStableKey(int playerId)
+        {
+            var peer = _net.GetPeer(playerId);
+            if (peer != null) return CoopSaveStorage.MakeStablePlayerKey(peer);
+            return playerId == 0 ? "host" : "";
+        }
+
+        public void SetPlayerTurnBlockCount(int playerId, int count)
+        {
+            int clamped = Math.Max(0, count);
+            _blocksPlacedByPlayer[playerId] = clamped;
+            string key = ResolveStableKey(playerId);
+            if (!string.IsNullOrEmpty(key))
+                _blocksPlacedByStableKey[key] = clamped;
+        }
+
+        public void RebindReconnectedPeer(PeerInfo peer)
+        {
+            if (peer == null) return;
+            string key = CoopSaveStorage.MakeStablePlayerKey(peer);
+            if (string.IsNullOrEmpty(key)) return;
+            if (_blocksPlacedByStableKey.TryGetValue(key, out int prevCount))
+            {
+                _blocksPlacedByPlayer[peer.PlayerId] = Math.Max(0, prevCount);
+                if (_net.IsHost) BroadcastTurnBlockCount();
+                OnTurnBlockCountChanged?.Invoke();
+            }
+        }
+
+        public void ApplyPendingRestoredBlockCounts()
+        {
+            if (PendingRestoreBlockCounts == null) return;
+            var pending = PendingRestoreBlockCounts;
+            PendingRestoreBlockCounts = null;
+
+            _blocksPlacedByPlayer.Clear();
+            _blocksPlacedByStableKey.Clear();
+            foreach (var kv in pending)
+                SetPlayerTurnBlockCount(kv.Key, kv.Value);
+
+            if (_net.IsHost) BroadcastTurnBlockCount();
+            OnTurnBlockCountChanged?.Invoke();
+        }
+
+        public bool CanPlaceBlockNow(int playerId, out string denyReason)
         {
             denyReason = "";
-            if (!IsSharedBlockCapActive()) return true;
+            if (!IsBlockCapActive()) return true;
             int cap = GetEffectiveTurnBlockCap();
-            if (BlocksPlacedThisTurn >= cap)
+            int placed = GetBlocksPlacedByPlayer(playerId);
+            if (placed >= cap)
             {
-                denyReason = $"Turn block cap reached ({BlocksPlacedThisTurn}/{cap}) — coordinate with teammates!";
+                denyReason = CoopLoc.F("hud.block_limit_reached", placed, cap);
                 return false;
             }
             return true;
         }
 
-        public void IncrementTurnBlockCount()
+        public void IncrementTurnBlockCount(int playerId)
         {
-            if (!IsSharedBlockCapActive()) return;
-            BlocksPlacedThisTurn++;
+            if (!IsBlockCapActive()) return;
+            SetPlayerTurnBlockCount(playerId, GetBlocksPlacedByPlayer(playerId) + 1);
             if (_net.IsHost) BroadcastTurnBlockCount();
             OnTurnBlockCountChanged?.Invoke();
         }
 
-        public void DecrementTurnBlockCount()
+        public void DecrementTurnBlockCount(int playerId)
         {
-            if (!IsSharedBlockCapActive()) return;
-            if (BlocksPlacedThisTurn > 0) BlocksPlacedThisTurn--;
+            if (!IsBlockCapActive()) return;
+            int cur = GetBlocksPlacedByPlayer(playerId);
+            if (cur > 0)
+                SetPlayerTurnBlockCount(playerId, cur - 1);
             if (_net.IsHost) BroadcastTurnBlockCount();
             OnTurnBlockCountChanged?.Invoke();
         }
@@ -83,12 +150,27 @@ namespace EmberwardCoop.Sync
         public void BroadcastTurnBlockCount()
         {
             if (!_net.IsHost) return;
-            _net.BroadcastToClients(PacketType.EvtTurnBlockCount, w => w.Write(BlocksPlacedThisTurn));
+            _net.BroadcastToClients(PacketType.EvtTurnBlockCount, w =>
+            {
+                w.Write(_blocksPlacedByPlayer.Count);
+                foreach (var kv in _blocksPlacedByPlayer)
+                {
+                    w.Write(kv.Key);
+                    w.Write(kv.Value);
+                }
+            });
         }
 
         public void HandleEvtTurnBlockCount(BinaryReader r)
         {
-            BlocksPlacedThisTurn = r.ReadInt32();
+            int count = r.ReadBoundedCount(32);
+            _blocksPlacedByPlayer.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                int playerId = r.ReadInt32();
+                int placed = Math.Max(0, r.ReadInt32());
+                SetPlayerTurnBlockCount(playerId, placed);
+            }
             OnTurnBlockCountChanged?.Invoke();
         }
 
@@ -114,7 +196,7 @@ namespace EmberwardCoop.Sync
                     {
                         var sd = wd.list_SpawnData[i];
                         if (sd == null) continue;
-                        // Do not duplicate single-count bosses; scale regular wave counts
+                        // Keep single-count boss spawns intact; scale regular wave groups.
                         if (sd.waveCount > 1)
                         {
                             int newWaveCount = Math.Max(sd.waveCount, Mathf.RoundToInt(sd.waveCount * mult));

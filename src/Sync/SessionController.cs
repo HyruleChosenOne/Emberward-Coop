@@ -98,6 +98,7 @@ namespace EmberwardCoop.Sync
             Net.OnPlayerJoined += peer =>
             {
                 Ownership.RebindReconnectedPeer(peer);
+                Balance.RebindReconnectedPeer(peer);
                 if (Net.IsHost)
                 {
                     Settings.OnPlayerCountChanged(Net.Roster.Count);
@@ -499,6 +500,7 @@ namespace EmberwardCoop.Sync
 
                 var usedSlots = new HashSet<int>();
                 var gd = GameDataManager.instance?.GameplayData;
+                var pendingBlockCounts = new Dictionary<int, int>();
 
                 if (Net.Roster.TryGetValue(0, out var hostPeer))
                 {
@@ -507,6 +509,7 @@ namespace EmberwardCoop.Sync
                     {
                         CoopSaveStorage.ApplySavedInventoryToGameplay(gd, hostSaved);
                         Run.PendingRestoreCoin = hostSaved.Coin;
+                        pendingBlockCounts[0] = Math.Max(0, hostSaved.BlocksPlacedThisTurn);
                     }
                 }
 
@@ -515,8 +518,12 @@ namespace EmberwardCoop.Sync
                     if (kv.Key == 0) continue;
                     var peerSaved = CoopSaveStorage.MatchSavedPlayer(save, kv.Value, usedSlots);
                     if (peerSaved != null)
+                    {
                         Run.SendPeerInventoryRestore(kv.Key, peerSaved);
+                        pendingBlockCounts[kv.Key] = Math.Max(0, peerSaved.BlocksPlacedThisTurn);
+                    }
                 }
+                Balance.PendingRestoreBlockCounts = pendingBlockCounts;
 
                 string targetScene = save.TargetScene == "MainGame" ? "MainGame" : "MapScene";
                 CoopLogger.Info(LogCategory.Sync, $"Resuming Co-op Save '{save.SaveId}' -> {targetScene} (Step {save.CurMapStep + 1}).");
@@ -616,6 +623,8 @@ namespace EmberwardCoop.Sync
             Quests.Reset();
             Ownership.ResetRunStats();
             Balance.ResetForNewStage();
+            Balance.ClearPendingRestoreCounts();
+            Board.ClearPendingClientUpgrade();
             Gifting.ResetWaveCounter();
         }
 
@@ -676,7 +685,10 @@ namespace EmberwardCoop.Sync
                 Sketch.ClearAll();
                 Ownership.ResetStageEntities();
                 Balance.ResetForNewStage();
+                Board.ClearPendingClientUpgrade();
                 Gifting.ResetWaveCounter();
+                if (!GameRefs.IsInBattle)
+                    Votes.ClearVictoryUpgradeState();
 
                 if (GameRefs.IsInTitle)
                 {

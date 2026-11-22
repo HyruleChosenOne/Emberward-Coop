@@ -277,7 +277,7 @@
   "modcfg.auto_collapse_hud": "Spieler-HUD im Kampf einklappen:",
   "modcfg.show_cursors": "3D-Cursor & Namen der Mitspieler:",
   "modcfg.show_ghosts": "Bauvorschau der Mitspieler anzeigen:",
-  "modcfg.ownership_rings": "Turm-Besitzringe:",
+  "modcfg.ownership_rings": "Turmbesitz-Umrisse:",
   "modcfg.own_always": "Immer",
   "modcfg.own_hover": "Bei Mauszeiger",
   "modcfg.own_off": "Aus",
@@ -286,5 +286,11 @@
   "modcfg.scale_large": "Groß",
   "modcfg.ready_sound": "Bereitschafts-Signalton:",
   "modcfg.lock_cam_radial": "Kamera in Radialmenüs sperren:",
-  "modcfg.reset_keybinds": "Tastenbelegung zurücksetzen"
+  "modcfg.reset_keybinds": "Tastenbelegung zurücksetzen",
+  "hud.owner_only_upgrade": "Nur {0} kann diesen Turm verbessern",
+  "hud.blocks_remaining": "Blöcke übrig: {0}/{1}",
+  "hud.block_limit_reached": "Blocklimit erreicht ({0}/{1} diese Runde)",
+  "settings.val_per_player_cap": "{0} / Spieler",
+  "transition.waiting_for_host": "Warte auf Host...",
+  "victory.waiting_client_upgrades": "Warte darauf, dass {0} Upgrades abschließt..."
 }

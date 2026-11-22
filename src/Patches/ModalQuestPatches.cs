@@ -341,7 +341,7 @@ namespace EmberwardCoop.Patches
             return true;
         }
 
-        [HarmonyPatch(typeof(UI_DiscoverCard_Popup), nameof(UI_DiscoverCard_Popup.OnCardClickedCallback), new[] { typeof(UI_Obj_DiscoverRewardPack), typeof(DiscoverRewardPack), typeof(Il2CppSystem.Collections.Generic.List<UnityEngine.Transform>) })]
+        [HarmonyPatch(typeof(UI_DiscoverCard_Popup), nameof(UI_DiscoverCard_Popup.OnCardClickedCallback), new[] { typeof(UI_Obj_DiscoverRewardPack), typeof(DiscoverRewardPack), typeof(Il2CppSystem.Collections.Generic.List<UnityEngine.Vector3>) })]
         [HarmonyPrefix]
         public static bool DiscoverCard_OnCardClicked_Prefix(UI_DiscoverCard_Popup __instance, UI_Obj_DiscoverRewardPack ui_Obj_DiscoverRewardPack)
         {
