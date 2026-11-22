@@ -4,7 +4,7 @@
 
 # Emberward Co-op
 
-Online P2P and Direct LAN co-op mod (2–6 players) for **Emberward**, built with BepInEx 6 (IL2CPP) and Harmony.
+Online P2P and Direct LAN co-op mod (2–4 players) for **Emberward**, built with BepInEx 6 (IL2CPP) and Harmony.
 
 Hosts can run sessions over Steam P2P or Direct LAN using either a **Shared Resources** pool or **Separate Resources** with per-player economies and tower ownership. All match settings, worlds, difficulties, board actions, waves, modals, and quests stay synchronized across connected players while keeping client solo saves isolated.
 
