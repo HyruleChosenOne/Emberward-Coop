@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using EmberwardCoop.Localization;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
 
 namespace EmberwardCoop.Rules
@@ -16,6 +17,17 @@ namespace EmberwardCoop.Rules
         public Color FallbackColor;
         public bool IsUnlocked;
         public bool IsCleared;
+    }
+
+    public sealed class EndlessStageEntry
+    {
+        public string SceneName;
+        public eWorldType WorldType;
+        public eEndlessModeType EndlessType;
+        public string DisplayName;
+        public string Subtitle;
+        public string Description;
+        public int SubStageNumber;
     }
 
     public static class WorldCatalog
@@ -84,6 +96,22 @@ namespace EmberwardCoop.Rules
             }
         };
 
+        private static readonly (eWorldType world, string[] scenes)[] DefaultEndlessWorldStages =
+        {
+            (eWorldType.WORLD_1_FOREST,   new[] { "EnvScene_018", "EnvScene_019", "EnvScene_020", "EnvScene_017" }),
+            (eWorldType.WORLD_2_DESERT,   new[] { "EnvScene_109", "EnvScene_112", "EnvScene_107", "EnvScene_116" }),
+            (eWorldType.WORLD_3_MOUNTAIN, new[] { "EnvScene_206", "EnvScene_211", "EnvScene_214", "EnvScene_216" }),
+            (eWorldType.WORLD_4_DEPTH,    new[] { "EnvScene_309", "EnvScene_313", "EnvScene_315", "EnvScene_312" }),
+            (eWorldType.WORLD_5_COSMO,    new[] { "EnvScene_408", "EnvScene_403", "EnvScene_405", "EnvScene_407" })
+        };
+
+        public static readonly CoopRunMode[] AllRunModes =
+        {
+            CoopRunMode.Campaign,
+            CoopRunMode.Endless,
+            CoopRunMode.EnigmaSanctum
+        };
+
         public static readonly eWorldType[] AllBaseWorldTypes =
         {
             eWorldType.WORLD_1_FOREST,
@@ -109,6 +137,158 @@ namespace EmberwardCoop.Rules
             return -1;
         }
 
+        public static List<CoopRunMode> GetPartySelectableRunModes(PartyUnlockResolver resolver)
+        {
+            var result = new List<CoopRunMode>();
+            for (int i = 0; i < AllRunModes.Length; i++)
+            {
+                var m = AllRunModes[i];
+                if (resolver == null || resolver.IsRunModeUnlockedForParty(m))
+                    result.Add(m);
+            }
+            if (result.Count == 0)
+                result.Add(CoopRunMode.Campaign);
+            return result;
+        }
+
+        public static string GetRunModeDisplayName(CoopRunMode mode)
+        {
+            if (mode == CoopRunMode.EnigmaSanctum)
+            {
+                string native = TryGetGameLoc("SELECT_DIFFICULTY_EVENT_SANCTUM_OF_ENIGMA");
+                if (!string.IsNullOrWhiteSpace(native)) return native;
+                return CoopLoc.T("mode.enigma_sanctum");
+            }
+            if (mode == CoopRunMode.Endless)
+            {
+                string native = TryGetGameLoc("SELECT_DIFFICULTY_ENDLESS_MODE_TAB_TITLE")
+                             ?? TryGetGameLoc("ENDLESS_MODE");
+                if (!string.IsNullOrWhiteSpace(native)) return native;
+                return CoopLoc.T("mode.endless");
+            }
+            return CoopLoc.T("mode.campaign");
+        }
+
+        public static string GetRunModeDescription(CoopRunMode mode)
+        {
+            if (mode == CoopRunMode.EnigmaSanctum)
+            {
+                string native = TryGetGameLoc("SELECT_DIFFICULTY_EVENT_SANCTUM_OF_ENIGMA_DESC");
+                if (!string.IsNullOrWhiteSpace(native)) return native;
+                return CoopLoc.T("mode.enigma_sanctum_desc");
+            }
+            if (mode == CoopRunMode.Endless)
+            {
+                return CoopLoc.T("mode.endless_desc");
+            }
+            return CoopLoc.T("mode.campaign_desc");
+        }
+
+        public static List<EndlessStageEntry> GetEndlessStagesForWorld(eWorldType world)
+        {
+            var result = new List<EndlessStageEntry>();
+            string worldName = GetWorldDisplayName(world);
+            string worldDesc = CoopLoc.T(GetWorldInfo(world).DescKey);
+
+            string[] scenes = null;
+            for (int i = 0; i < DefaultEndlessWorldStages.Length; i++)
+            {
+                if (DefaultEndlessWorldStages[i].world == world)
+                {
+                    scenes = DefaultEndlessWorldStages[i].scenes;
+                    break;
+                }
+            }
+            if (scenes == null || scenes.Length == 0)
+                scenes = DefaultEndlessWorldStages[0].scenes;
+
+            for (int i = 0; i < scenes.Length; i++)
+            {
+                int stageNum = i + 1;
+                result.Add(new EndlessStageEntry
+                {
+                    SceneName = scenes[i],
+                    WorldType = world,
+                    EndlessType = eEndlessModeType.BASIC_ENDLESS,
+                    SubStageNumber = stageNum,
+                    DisplayName = $"{worldName} — {CoopLoc.F("mode.stage_num", stageNum)}",
+                    Subtitle = CoopLoc.T("mode.endless_waves"),
+                    Description = worldDesc
+                });
+            }
+
+            // Include Random Endless Challenge option at the end of the stage list
+            result.Add(new EndlessStageEntry
+            {
+                SceneName = scenes[0],
+                WorldType = world,
+                EndlessType = eEndlessModeType.RANDOM_ENDLESS_CHALLENGE,
+                SubStageNumber = scenes.Length + 1,
+                DisplayName = $"{worldName} — {CoopLoc.T("mode.random_endless")}",
+                Subtitle = CoopLoc.T("mode.endless_waves"),
+                Description = CoopLoc.T("mode.random_endless_desc")
+            });
+
+            return result;
+        }
+
+        public static EndlessStageEntry GetEnigmaSanctumEntry()
+        {
+            return new EndlessStageEntry
+            {
+                SceneName = "EnvScene_907",
+                WorldType = eWorldType.WORLD_1_FOREST,
+                EndlessType = eEndlessModeType.ENIGMA_SANCTUM_CASUAL,
+                SubStageNumber = 1,
+                DisplayName = GetRunModeDisplayName(CoopRunMode.EnigmaSanctum),
+                Subtitle = CoopLoc.T("mode.enigma_sanctum_waves"),
+                Description = GetRunModeDescription(CoopRunMode.EnigmaSanctum)
+            };
+        }
+
+        private static string TryGetGameLoc(string key)
+        {
+            try
+            {
+                var lm = LocalizationManager.Instance;
+                if (lm == null) return null;
+                string[] tables = { "UI", "Default", "Game", "Map" };
+                for (int i = 0; i < tables.Length; i++)
+                {
+                    if (lm.HasString(tables[i], key))
+                    {
+                        string val = lm.GetString(tables[i], key, (Il2CppReferenceArray<Il2CppSystem.Object>)null);
+                        if (!string.IsNullOrWhiteSpace(val) && !string.Equals(val, key, StringComparison.OrdinalIgnoreCase))
+                            return val.Trim();
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        public static string GetItemShortName(eItemType t)
+        {
+            try
+            {
+                var item = ResourceManager.Instance?.GetItemDataByType(t);
+                string loc = item?.GetLocNameString(false);
+                if (!string.IsNullOrWhiteSpace(loc)) return loc.Trim();
+            }
+            catch { }
+
+            string s = t.ToString();
+            if (s.StartsWith("TOWER_", StringComparison.OrdinalIgnoreCase)) s = s.Substring(6);
+            else if (s.StartsWith("TETRIS_", StringComparison.OrdinalIgnoreCase)) s = s.Substring(7);
+            s = s.Replace('_', ' ').ToLowerInvariant();
+            if (s.Length == 0) return "?";
+            var chars = s.ToCharArray();
+            chars[0] = char.ToUpperInvariant(chars[0]);
+            for (int i = 1; i < chars.Length; i++)
+                if (chars[i - 1] == ' ') chars[i] = char.ToUpperInvariant(chars[i]);
+            return new string(chars);
+        }
+
         public static List<eGameDifficultyType> GetPartySelectableDifficulties(PartyUnlockResolver resolver)
         {
             var result = new List<eGameDifficultyType>();
@@ -126,7 +306,7 @@ namespace EmberwardCoop.Rules
             return result;
         }
 
-        public static List<WorldEntryInfo> GetHostSelectableWorlds(eGameDifficultyType difficulty, PartyUnlockResolver resolver = null)
+        public static List<WorldEntryInfo> GetHostSelectableWorlds(eGameDifficultyType difficulty, PartyUnlockResolver resolver = null, CoopRunMode runMode = CoopRunMode.Campaign)
         {
             var result = new List<WorldEntryInfo>();
             var pld = GameDataManager.instance?.Playerdata;
@@ -134,6 +314,10 @@ namespace EmberwardCoop.Rules
             for (int i = 0; i < BaseWorlds.Length; i++)
             {
                 var bw = BaseWorlds[i];
+                // Endless Mode only has stage pools for Worlds 1..5
+                if (runMode == CoopRunMode.Endless && bw.WorldType == eWorldType.WORLD_100_CHAOS_REALM)
+                    continue;
+
                 bool implemented = true;
                 bool unlocked = bw.WorldType == eWorldType.WORLD_1_FOREST;
                 bool cleared = false;
@@ -265,9 +449,13 @@ namespace EmberwardCoop.Rules
             var s = state.Settings;
             var parts = new List<string>
             {
-                $"{CoopLoc.T("lobby.select_difficulty")} {GetDifficultyDisplayName(state.DifficultyTier)}",
-                $"{CoopLoc.T("settings.enemy_hp")} {Mathf.RoundToInt(s.EnemyHpMultiplier * 100)}%"
+                $"{CoopLoc.T("lobby.game_mode")} {GetRunModeDisplayName(state.SelectedRunMode)}"
             };
+
+            if (state.SelectedRunMode == CoopRunMode.Campaign)
+                parts.Add($"{CoopLoc.T("lobby.select_difficulty")} {GetDifficultyDisplayName(state.DifficultyTier)}");
+
+            parts.Add($"{CoopLoc.T("settings.enemy_hp")} {Mathf.RoundToInt(s.EnemyHpMultiplier * 100)}%");
 
             if (Math.Abs(s.WaveDensityMultiplier - 1.0f) > 0.01f)
                 parts.Add($"{CoopLoc.T("settings.wave_density")} {s.WaveDensityMultiplier:0.00}x");
@@ -287,10 +475,7 @@ namespace EmberwardCoop.Rules
                 parts.Add($"{CoopLoc.T("settings.gifting")} {giftStr}");
             }
 
-            if (s.EconomyMode == CoopEconomyMode.SharedResources && !s.SharedLoadoutsInSharedMode)
-                parts.Add(CoopLoc.T("settings.val_individual_loadouts"));
-
-            if (s.UnlockAllMapsModes)
+            if (s.UnlockAllMapsModes || PartyUnlockResolver.IsCoopUnlockAllEffective())
                 parts.Add(CoopLoc.T("lobby.unlock_all_badge"));
 
             if (s.BlockPacing == BlockPacingRule.SharedTurnBlockCap)

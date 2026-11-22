@@ -43,6 +43,24 @@ namespace EmberwardCoop.Serialization
             _inCoopSession = true;
         }
 
+        public static void PrepareFreshTempSession()
+        {
+            var gdm = GameDataManager.instance;
+            if (gdm == null) return;
+
+            if (!_hasBackup)
+            {
+                _soloGameplayBackup = gdm.gameplayData;
+                _soloIntermediateBackup = gdm.intermediateData;
+                _hasBackup = true;
+            }
+
+            gdm.gameplayData_tempSession = new GameplayData();
+            gdm.intermediateData_tempSession = new IntermediateData();
+            gdm.doUseTempSessionData = true;
+            _inCoopSession = true;
+        }
+
         public static void InitializeFreshTempRun(int seed, eWorldType world, eGameDifficultyType difficulty)
         {
             var gdm = GameDataManager.instance;
@@ -55,10 +73,10 @@ namespace EmberwardCoop.Serialization
                 _hasBackup = true;
             }
 
-            // Temporarily swap gdm.gameplayData to a fresh object so vanilla StartNewGame initializes
-            // all run fields cleanly without mutating the solo GameplayData instance.
             var freshGameplay = new GameplayData();
             var freshInterm = new IntermediateData();
+            // Mark isolated before StartNewGame so any internal SaveData hook cannot overwrite the solo file.
+            _inCoopSession = true;
             try
             {
                 gdm.doUseTempSessionData = false;
@@ -116,8 +134,6 @@ namespace EmberwardCoop.Serialization
             gdm.doUseTempSessionData = wasUsingTemp || _inCoopSession;
         }
 
-        // Commits only PlayerLifetimeData (EXP, stage clears, boss flags, codex, achievements)
-        // to the local player's solo savefile while keeping solo GameplayData untouched.
         public static void CommitSoloProfileMetaSave()
         {
             var gdm = GameDataManager.instance;
@@ -227,7 +243,6 @@ namespace EmberwardCoop.Serialization
         public int GiftPerWaveCap { get; set; }
         public int DraftMode { get; set; }
         public int SpeedControl { get; set; }
-        public bool SharedLoadoutsInSharedMode { get; set; } = true;
         public bool UnlockAllMapsModes { get; set; }
     }
 
@@ -237,6 +252,9 @@ namespace EmberwardCoop.Serialization
         public string SaveId { get; set; } = "";
         public string DisplayName { get; set; } = "";
         public string SavedAtUtc { get; set; } = "";
+        public int RunMode { get; set; } = (int)CoopRunMode.Campaign;
+        public string EndlessSceneName { get; set; } = "EnvScene_018";
+        public int EndlessType { get; set; } = (int)eEndlessModeType.BASIC_ENDLESS;
         public int WorldType { get; set; }
         public int Difficulty { get; set; }
         public int HostHero { get; set; } = (int)eCharacterType.BASIC;
@@ -256,13 +274,15 @@ namespace EmberwardCoop.Serialization
 
         public string BuildCompactSummary()
         {
-            string wName = WorldCatalog.GetWorldDisplayName((eWorldType)WorldType);
-            string dName = WorldCatalog.GetDifficultyDisplayName((eGameDifficultyType)Difficulty);
-            string mode = Settings.EconomyMode == (int)CoopEconomyMode.SeparateResources ? "Separate" : "Shared";
+            var runMode = (CoopRunMode)RunMode;
+            string modeLabel = runMode == CoopRunMode.Campaign
+                ? $"{WorldCatalog.GetWorldDisplayName((eWorldType)WorldType)} · {WorldCatalog.GetDifficultyDisplayName((eGameDifficultyType)Difficulty)} · Step {CurMapStep + 1}"
+                : $"{WorldCatalog.GetRunModeDisplayName(runMode)} · Wave {Math.Max(1, WaveRound + 1)}";
+            string econ = Settings.EconomyMode == (int)CoopEconomyMode.SeparateResources ? "Separate" : "Shared";
             string timeStr = "";
             if (DateTime.TryParse(SavedAtUtc, out DateTime dt))
                 timeStr = dt.ToLocalTime().ToString("MM/dd HH:mm");
-            return $"{wName} · {dName} · Step {CurMapStep + 1} · {mode}" + (string.IsNullOrEmpty(timeStr) ? "" : $" · {timeStr}");
+            return $"{modeLabel} · {econ}" + (string.IsNullOrEmpty(timeStr) ? "" : $" · {timeStr}");
         }
     }
 
@@ -362,12 +382,20 @@ namespace EmberwardCoop.Serialization
                 byte[] boardBytes = GameRefs.IsInBattle ? session.Board.CaptureBoardSnapshotBytes() : Array.Empty<byte>();
 
                 var s = session.Settings;
+                var setup = session.LobbySetup;
+                string dispName = setup.SelectedRunMode == CoopRunMode.Campaign
+                    ? $"{WorldCatalog.GetWorldDisplayName(gd.curWorld)} ({WorldCatalog.GetDifficultyDisplayName(gd.difficulty)})"
+                    : WorldCatalog.GetRunModeDisplayName(setup.SelectedRunMode);
+
                 var save = new CoopSaveFile
                 {
                     SaveFormatVersion = 1,
                     SaveId = id,
-                    DisplayName = $"{WorldCatalog.GetWorldDisplayName(gd.curWorld)} ({WorldCatalog.GetDifficultyDisplayName(gd.difficulty)})",
+                    DisplayName = dispName,
                     SavedAtUtc = DateTime.UtcNow.ToString("O"),
+                    RunMode = (int)setup.SelectedRunMode,
+                    EndlessSceneName = setup.SelectedEndlessSceneName ?? "EnvScene_018",
+                    EndlessType = (int)setup.SelectedEndlessType,
                     WorldType = (int)gd.curWorld,
                     Difficulty = (int)gd.difficulty,
                     HostHero = (int)gd.characterType,
@@ -378,7 +406,7 @@ namespace EmberwardCoop.Serialization
                     CoreMaxHp = gd.maxHP,
                     TargetScene = scene,
                     WaveRound = MainGame.Instance != null ? MainGame.Instance.Round : 0,
-                    UnlockAllMapsModesActive = s.UnlockAllMapsModes,
+                    UnlockAllMapsModesActive = PartyUnlockResolver.IsCoopUnlockAllEffective(),
                     Settings = new SavedSettingsDto
                     {
                         EconomyMode = (int)s.EconomyMode,
@@ -397,8 +425,7 @@ namespace EmberwardCoop.Serialization
                         GiftPerWaveCap = s.GiftPerWaveCap,
                         DraftMode = (int)s.DraftMode,
                         SpeedControl = (int)s.SpeedControl,
-                        SharedLoadoutsInSharedMode = s.SharedLoadoutsInSharedMode,
-                        UnlockAllMapsModes = s.UnlockAllMapsModes
+                        UnlockAllMapsModes = PartyUnlockResolver.IsCoopUnlockAllEffective()
                     },
                     RunSnapshotBase64 = Convert.ToBase64String(runBytes),
                     BoardSnapshotBase64 = boardBytes.Length > 0 ? Convert.ToBase64String(boardBytes) : ""
@@ -434,22 +461,7 @@ namespace EmberwardCoop.Serialization
                     }
                     else
                     {
-                        var resolved = LoadoutCatalog.ResolveEffectiveLoadout(peer.Loadout, gd.characterType, gd.randomSeed ^ (peer.PlayerId * 1337));
-                        for (int i = 0; i < resolved.Towers.Count; i++)
-                        {
-                            ps.LoadoutTowers.Add(new SavedTowerDto { ItemType = (int)resolved.Towers[i], Level = 1 });
-                            ps.CollectedTowers.Add(new SavedTowerDto { ItemType = (int)resolved.Towers[i], Level = 1 });
-                        }
-                        for (int i = 0; i < resolved.Blocks.Count; i++)
-                        {
-                            ps.StorageCards.Add(new SavedCardDto
-                            {
-                                ItemType = (int)resolved.Blocks[i],
-                                CardType = (int)eCardType.PANEL_CARD,
-                                IsTetris = true,
-                                Seed = unchecked(gd.randomSeed ^ (i * 9973))
-                            });
-                        }
+                        CaptureGameplayInventoryInto(gd, MainGame.Instance?.IngameData, ps);
                     }
                     save.Players.Add(ps);
                 }
@@ -575,7 +587,6 @@ namespace EmberwardCoop.Serialization
             target.GiftPerWaveCap = Math.Max(0, d.GiftPerWaveCap);
             target.DraftMode = (DraftSyncMode)d.DraftMode;
             target.SpeedControl = (SpeedControlRule)d.SpeedControl;
-            target.SharedLoadoutsInSharedMode = d.SharedLoadoutsInSharedMode;
             target.UnlockAllMapsModes = d.UnlockAllMapsModes;
         }
 
@@ -669,19 +680,19 @@ namespace EmberwardCoop.Serialization
                 Coin = r.ReadInt32()
             };
 
-            int lc = r.ReadInt32();
+            int lc = r.ReadBoundedCount(64);
             for (int i = 0; i < lc; i++)
                 dto.LoadoutTowers.Add(new SavedTowerDto { ItemType = r.ReadInt32(), Level = r.ReadInt32() });
 
-            int cc = r.ReadInt32();
+            int cc = r.ReadBoundedCount(256);
             for (int i = 0; i < cc; i++)
                 dto.CollectedTowers.Add(new SavedTowerDto { ItemType = r.ReadInt32(), Level = r.ReadInt32() });
 
-            int sc = r.ReadInt32();
+            int sc = r.ReadBoundedCount(512);
             for (int i = 0; i < sc; i++)
                 dto.StorageCards.Add(SavedCardDto.FromNet(NetCardInfo.Read(r)));
 
-            int rc = r.ReadInt32();
+            int rc = r.ReadBoundedCount(256);
             for (int i = 0; i < rc; i++)
                 dto.Relics.Add(r.ReadInt32());
 

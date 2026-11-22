@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using EmberwardCoop.Core;
 using EmberwardCoop.Localization;
 using EmberwardCoop.Presence;
+using EmberwardCoop.Rules;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using TMPro;
 using UnityEngine;
@@ -253,6 +254,16 @@ namespace EmberwardCoop.UI
             { eWorldType.WORLD_100_CHAOS_REALM, new[] { "World_100", "ChaosRealm", "AnomalyLevel", "EndlessMode" } }
         };
 
+        private static readonly string[] EndlessBannerFallbacks =
+        {
+            "BG_EndlessMode", "RandomEndless", "EndlessMode", "World_1", "AchievementBackgroundUnlocked"
+        };
+
+        private static readonly string[] EnigmaSanctumBannerFallbacks =
+        {
+            "BG_Event_EnigmaSanctum", "EnigmaSanctum", "AnomalyLevel", "World_5", "AchievementBackgroundUnlocked"
+        };
+
         public static void OnSceneChanged()
         {
             PruneDeadReferences();
@@ -327,6 +338,16 @@ namespace EmberwardCoop.UI
             foreach (var kv in _roleCache)
                 if (kv.Value == null) deadKeys.Add(kv.Key);
             for (int i = 0; i < deadKeys.Count; i++) _roleCache.Remove(deadKeys[i]);
+
+            for (int i = _playableHeroes.Count - 1; i >= 0; i--)
+            {
+                if (_playableHeroes[i] == null || _playableHeroes[i].PortraitSprite == null)
+                {
+                    if (_playableHeroes[i] != null && !string.IsNullOrEmpty(_playableHeroes[i].HeroId))
+                        _heroesById.Remove(_playableHeroes[i].HeroId);
+                    _playableHeroes.RemoveAt(i);
+                }
+            }
 
             if (PrimaryFont == null) PrimaryFont = null;
             if (PrimaryFontMaterial == null) PrimaryFontMaterial = null;
@@ -427,7 +448,7 @@ namespace EmberwardCoop.UI
 
             if (sourceTmp == null)
             {
-                var allTmps = UnityEngine.Object.FindObjectsOfType<TMP_Text>();
+                var allTmps = UnityEngine.Object.FindObjectsByType<TMP_Text>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
                 if (allTmps != null)
                 {
                     for (int i = 0; i < allTmps.Length; i++)
@@ -468,7 +489,7 @@ namespace EmberwardCoop.UI
             {
                 if (string.IsNullOrEmpty(HoverSoundName))
                 {
-                    var hovers = UnityEngine.Object.FindObjectsOfType<UI_SoundOnMouseOver>(true);
+                    var hovers = UnityEngine.Object.FindObjectsByType<UI_SoundOnMouseOver>(FindObjectsInactive.Include, FindObjectsSortMode.None);
                     if (hovers != null)
                     {
                         for (int i = 0; i < hovers.Length; i++)
@@ -875,6 +896,20 @@ namespace EmberwardCoop.UI
             return ResolveRole("World_Default", WorldBannerFallbacks[eWorldType.WORLD_1_FOREST], preferSliced: false, fallbackToIcon: true);
         }
 
+        public static Sprite GetGameModeBannerSprite(CoopRunMode runMode, eWorldType world, eEndlessModeType endlessType = eEndlessModeType.BASIC_ENDLESS)
+        {
+            EnsureScanned();
+            if (runMode == CoopRunMode.EnigmaSanctum)
+                return ResolveRole("Banner_EnigmaSanctum", EnigmaSanctumBannerFallbacks, preferSliced: false, fallbackToIcon: true);
+            if (runMode == CoopRunMode.Endless)
+            {
+                if (endlessType == eEndlessModeType.RANDOM_ENDLESS_CHALLENGE)
+                    return ResolveRole("Banner_EndlessRandom", EndlessBannerFallbacks, preferSliced: false, fallbackToIcon: true);
+                return GetWorldBannerSprite(world) ?? ResolveRole("Banner_Endless", EndlessBannerFallbacks, preferSliced: false, fallbackToIcon: true);
+            }
+            return GetWorldBannerSprite(world);
+        }
+
         public static IReadOnlyList<HeroAvatarEntry> GetPlayableHeroes()
         {
             EnsureScanned();
@@ -912,8 +947,5 @@ namespace EmberwardCoop.UI
                 AccentColor = NativeStyleProvider.EmberGold
             };
         }
-
-        public static Sprite GetHeroPortraitSprite(string heroId)
-            => GetHeroAvatar(heroId)?.PortraitSprite ?? GetFallbackIcon();
     }
 }

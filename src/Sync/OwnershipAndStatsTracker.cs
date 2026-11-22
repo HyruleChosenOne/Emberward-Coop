@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using EmberwardCoop.Core;
 using EmberwardCoop.Networking;
+using EmberwardCoop.Serialization;
 using UnityEngine;
 
 namespace EmberwardCoop.Sync
@@ -85,10 +86,10 @@ namespace EmberwardCoop.Sync
                 Rerolls = r.ReadInt32(),
                 RelicCount = r.ReadInt32()
             };
-            int tc = r.ReadInt32();
+            int tc = r.ReadBoundedCount(64);
             s.LoadoutTowers = tc > 0 ? new int[tc] : Array.Empty<int>();
             for (int i = 0; i < tc; i++) s.LoadoutTowers[i] = r.ReadInt32();
-            int hc = r.ReadInt32();
+            int hc = r.ReadBoundedCount(64);
             s.HandBlocks = hc > 0 ? new int[hc] : Array.Empty<int>();
             for (int i = 0; i < hc; i++) s.HandBlocks[i] = r.ReadInt32();
             s.ActiveModal = r.ReadString();
@@ -103,7 +104,11 @@ namespace EmberwardCoop.Sync
 
         private readonly Dictionary<int, int> _towerInstanceOwners = new Dictionary<int, int>();
         private readonly Dictionary<int, int> _blockInstanceOwners = new Dictionary<int, int>();
+        private readonly Dictionary<int, string> _towerOwnerKeys = new Dictionary<int, string>();
+        private readonly Dictionary<int, string> _blockOwnerKeys = new Dictionary<int, string>();
+        private readonly Dictionary<int, ABaseTower> _towerInstances = new Dictionary<int, ABaseTower>();
         private readonly Dictionary<int, GameObject> _towerRings = new Dictionary<int, GameObject>();
+        private readonly Dictionary<int, Material> _ringMaterialsByColor = new Dictionary<int, Material>();
 
         public readonly Dictionary<int, PlayerContributionStats> RunStats = new Dictionary<int, PlayerContributionStats>();
         public readonly Dictionary<int, PlayerPeekSnapshot> PeekSnapshots = new Dictionary<int, PlayerPeekSnapshot>();
@@ -125,9 +130,15 @@ namespace EmberwardCoop.Sync
         {
             _towerInstanceOwners.Clear();
             _blockInstanceOwners.Clear();
+            _towerOwnerKeys.Clear();
+            _blockOwnerKeys.Clear();
+            _towerInstances.Clear();
             foreach (var ring in _towerRings.Values)
                 if (ring != null) UnityEngine.Object.Destroy(ring);
             _towerRings.Clear();
+            foreach (var mat in _ringMaterialsByColor.Values)
+                if (mat != null) UnityEngine.Object.Destroy(mat);
+            _ringMaterialsByColor.Clear();
             _lastPathLength = -1;
         }
 
@@ -137,6 +148,49 @@ namespace EmberwardCoop.Sync
             RunStats.Clear();
             PeekSnapshots.Clear();
             OnStatsUpdated?.Invoke();
+        }
+
+        public bool IsOwnerConnected(int ownerId)
+        {
+            if (ownerId <= 0) return true;
+            return _net.Roster.ContainsKey(ownerId);
+        }
+
+        private string ResolveStableKey(int ownerId)
+        {
+            var peer = _net.GetPeer(ownerId);
+            if (peer != null) return CoopSaveStorage.MakeStablePlayerKey(peer);
+            return ownerId == 0 ? "host" : $"peer:{ownerId}";
+        }
+
+        public void RebindReconnectedPeer(PeerInfo peer)
+        {
+            if (peer == null) return;
+            string key = CoopSaveStorage.MakeStablePlayerKey(peer);
+            if (string.IsNullOrEmpty(key)) return;
+
+            var blockIds = new List<int>(_blockOwnerKeys.Keys);
+            for (int i = 0; i < blockIds.Count; i++)
+            {
+                int id = blockIds[i];
+                if (string.Equals(_blockOwnerKeys[id], key, StringComparison.OrdinalIgnoreCase))
+                    _blockInstanceOwners[id] = peer.PlayerId;
+            }
+
+            var towerIds = new List<int>(_towerOwnerKeys.Keys);
+            for (int i = 0; i < towerIds.Count; i++)
+            {
+                int id = towerIds[i];
+                if (string.Equals(_towerOwnerKeys[id], key, StringComparison.OrdinalIgnoreCase))
+                {
+                    _towerInstanceOwners[id] = peer.PlayerId;
+                    if (_towerRings.TryGetValue(id, out var oldRing) && oldRing != null)
+                        UnityEngine.Object.Destroy(oldRing);
+                    _towerRings.Remove(id);
+                    if (_towerInstances.TryGetValue(id, out var tower) && tower != null)
+                        EnsureOwnershipRing(tower, peer.PlayerId);
+                }
+            }
         }
 
         public PlayerContributionStats GetOrCreateStats(int playerId)
@@ -154,6 +208,8 @@ namespace EmberwardCoop.Sync
             if (tower == null) return;
             int id = tower.GetInstanceID();
             _towerInstanceOwners[id] = ownerId;
+            _towerOwnerKeys[id] = ResolveStableKey(ownerId);
+            _towerInstances[id] = tower;
             GetOrCreateStats(ownerId).TowersBuilt++;
             EnsureOwnershipRing(tower, ownerId);
         }
@@ -163,6 +219,8 @@ namespace EmberwardCoop.Sync
             if (tower == null) return;
             int id = tower.GetInstanceID();
             _towerInstanceOwners[id] = ownerId;
+            _towerOwnerKeys[id] = ResolveStableKey(ownerId);
+            _towerInstances[id] = tower;
             EnsureOwnershipRing(tower, ownerId);
         }
 
@@ -177,6 +235,8 @@ namespace EmberwardCoop.Sync
             if (tower == null) return;
             int id = tower.GetInstanceID();
             _towerInstanceOwners.Remove(id);
+            _towerOwnerKeys.Remove(id);
+            _towerInstances.Remove(id);
             if (_towerRings.TryGetValue(id, out var ring))
             {
                 if (ring != null) UnityEngine.Object.Destroy(ring);
@@ -187,7 +247,9 @@ namespace EmberwardCoop.Sync
         public void StampBlockOwner(Obj_TetrisBlock block, int ownerId)
         {
             if (block == null) return;
-            _blockInstanceOwners[block.GetInstanceID()] = ownerId;
+            int id = block.GetInstanceID();
+            _blockInstanceOwners[id] = ownerId;
+            _blockOwnerKeys[id] = ResolveStableKey(ownerId);
             GetOrCreateStats(ownerId).BlocksPlaced++;
             RecordPathDeltaForPlayer(ownerId);
         }
@@ -195,7 +257,9 @@ namespace EmberwardCoop.Sync
         public void RegisterExistingBlockOwner(Obj_TetrisBlock block, int ownerId)
         {
             if (block == null) return;
-            _blockInstanceOwners[block.GetInstanceID()] = ownerId;
+            int id = block.GetInstanceID();
+            _blockInstanceOwners[id] = ownerId;
+            _blockOwnerKeys[id] = ResolveStableKey(ownerId);
         }
 
         public int GetBlockOwner(Obj_TetrisBlock block)
@@ -207,7 +271,31 @@ namespace EmberwardCoop.Sync
         public void UnregisterBlock(Obj_TetrisBlock block)
         {
             if (block == null) return;
-            _blockInstanceOwners.Remove(block.GetInstanceID());
+            int id = block.GetInstanceID();
+            _blockInstanceOwners.Remove(id);
+            _blockOwnerKeys.Remove(id);
+        }
+
+        private Material GetOrCreateRingMaterial(int colorIndex)
+        {
+            if (_ringMaterialsByColor.TryGetValue(colorIndex, out var cached) && cached != null)
+                return cached;
+
+            var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
+            if (shader == null) return null;
+
+            Color col = CoopConfig.GetPlayerColor(colorIndex);
+            var mat = new Material(shader);
+            Color ringCol = new Color(col.r, col.g, col.b, 0.58f);
+            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", ringCol);
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", ringCol);
+            if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);
+            if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            if (mat.HasProperty("_ZWrite")) mat.SetInt("_ZWrite", 0);
+            mat.renderQueue = 3050;
+            _ringMaterialsByColor[colorIndex] = mat;
+            return mat;
         }
 
         private void EnsureOwnershipRing(ABaseTower tower, int ownerId)
@@ -220,7 +308,6 @@ namespace EmberwardCoop.Sync
 
             try
             {
-                Color col = CoopConfig.GetPlayerColor(_net.GetPlayerColorIndex(ownerId));
                 var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
                 ring.name = $"EWCoop_OwnerRing_{ownerId}";
                 ring.layer = 2;
@@ -239,29 +326,69 @@ namespace EmberwardCoop.Sync
                 ring.transform.localPosition = new Vector3(0f, 0.04f, 0f);
                 ring.transform.localScale = new Vector3(dia, 0.015f, dia);
 
-                var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
-                if (shader != null)
+                var mat = GetOrCreateRingMaterial(_net.GetPlayerColorIndex(ownerId));
+                var rdr = ring.GetComponent<Renderer>();
+                if (rdr != null && mat != null)
                 {
-                    var mat = new Material(shader);
-                    Color ringCol = new Color(col.r, col.g, col.b, 0.58f);
-                    if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", ringCol);
-                    if (mat.HasProperty("_Color")) mat.SetColor("_Color", ringCol);
-                    if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);
-                    if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                    if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                    if (mat.HasProperty("_ZWrite")) mat.SetInt("_ZWrite", 0);
-                    mat.renderQueue = 3050;
-                    var rdr = ring.GetComponent<Renderer>();
-                    if (rdr != null)
-                    {
-                        rdr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                        rdr.receiveShadows = false;
-                        rdr.sharedMaterial = mat;
-                    }
+                    rdr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    rdr.receiveShadows = false;
+                    rdr.sharedMaterial = mat;
                 }
                 _towerRings[id] = ring;
             }
             catch { }
+        }
+
+        public void RefreshOwnershipRingColors()
+        {
+            foreach (var kv in _towerRings)
+            {
+                if (kv.Value == null || !_towerInstanceOwners.TryGetValue(kv.Key, out int ownerId)) continue;
+                var mat = GetOrCreateRingMaterial(_net.GetPlayerColorIndex(ownerId));
+                var rdr = kv.Value.GetComponent<Renderer>();
+                if (rdr != null && mat != null) rdr.sharedMaterial = mat;
+            }
+        }
+
+        private void UpdateOwnershipRingsVisibility()
+        {
+            if (_towerRings.Count == 0) return;
+            var mode = CoopConfig.OwnershipIndicatorMode?.Value ?? OwnershipDisplayMode.Always;
+            if (mode == OwnershipDisplayMode.Always)
+            {
+                foreach (var kv in _towerRings)
+                    if (kv.Value != null && !kv.Value.activeSelf) kv.Value.SetActive(true);
+                return;
+            }
+            if (mode == OwnershipDisplayMode.Off)
+            {
+                foreach (var kv in _towerRings)
+                    if (kv.Value != null && kv.Value.activeSelf) kv.Value.SetActive(false);
+                return;
+            }
+
+            int hoveredId = -1;
+            var curTower = GameRefs.GetTowerControl()?.curTower;
+            if (curTower != null)
+                hoveredId = curTower.GetInstanceID();
+
+            if (hoveredId < 0 && Camera.main != null)
+            {
+                Ray ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+                Plane ground = new Plane(Vector3.up, Vector3.zero);
+                if (ground.Raycast(ray, out float dist))
+                {
+                    var nearTower = GameRefs.FindTowerAt(ray.GetPoint(dist), 1.15f);
+                    if (nearTower != null) hoveredId = nearTower.GetInstanceID();
+                }
+            }
+
+            foreach (var kv in _towerRings)
+            {
+                if (kv.Value == null) continue;
+                bool vis = kv.Key == hoveredId;
+                if (kv.Value.activeSelf != vis) kv.Value.SetActive(vis);
+            }
         }
 
         public void RecordDamageByTower(ABaseTower tower, int damage)
@@ -317,6 +444,8 @@ namespace EmberwardCoop.Sync
         public void Tick(float now)
         {
             if (!_net.IsConnected) return;
+
+            UpdateOwnershipRingsVisibility();
 
             if (now - _lastPeekSendTime >= 1.25f)
             {
@@ -391,7 +520,7 @@ namespace EmberwardCoop.Sync
 
         public void HandleRunStatsSync(BinaryReader r)
         {
-            int count = r.ReadInt32();
+            int count = r.ReadBoundedCount(32);
             RunStats.Clear();
             for (int i = 0; i < count; i++)
             {

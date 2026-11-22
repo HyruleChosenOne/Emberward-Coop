@@ -29,8 +29,6 @@ namespace EmberwardCoop.Rules
             public int GiftPerWaveCap { get; set; }
             public int DraftMode { get; set; }
             public int SpeedControl { get; set; }
-            public bool SharedLoadoutsInSharedMode { get; set; } = true;
-            public bool UnlockAllMapsModes { get; set; }
         }
 
         public static string GetPresetsDirectory()
@@ -80,9 +78,7 @@ namespace EmberwardCoop.Rules
                     AllowResourceGifting = s.AllowResourceGifting,
                     GiftPerWaveCap = s.GiftPerWaveCap,
                     DraftMode = (int)s.DraftMode,
-                    SpeedControl = (int)s.SpeedControl,
-                    SharedLoadoutsInSharedMode = s.SharedLoadoutsInSharedMode,
-                    UnlockAllMapsModes = s.UnlockAllMapsModes
+                    SpeedControl = (int)s.SpeedControl
                 };
                 string path = Path.Combine(GetPresetsDirectory(), safe + ".json");
                 File.WriteAllText(path, JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true }));
@@ -123,8 +119,7 @@ namespace EmberwardCoop.Rules
                 target.GiftPerWaveCap = Math.Max(0, dto.GiftPerWaveCap);
                 target.DraftMode = (DraftSyncMode)dto.DraftMode;
                 target.SpeedControl = (SpeedControlRule)dto.SpeedControl;
-                target.SharedLoadoutsInSharedMode = dto.SharedLoadoutsInSharedMode;
-                target.UnlockAllMapsModes = dto.UnlockAllMapsModes;
+                target.SyncUnlockAllFromModConfig();
                 CoopLogger.Info(LogCategory.Sync, $"Loaded custom preset '{safe}'.");
                 return true;
             }
@@ -133,19 +128,6 @@ namespace EmberwardCoop.Rules
                 CoopLogger.Warn(LogCategory.Sync, $"Failed to load preset '{safe}': {ex.Message}");
                 return false;
             }
-        }
-
-        public static bool DeletePreset(string rawName)
-        {
-            string safe = SanitizeFileName(rawName);
-            if (string.IsNullOrEmpty(safe)) return false;
-            try
-            {
-                string path = Path.Combine(GetPresetsDirectory(), safe + ".json");
-                if (File.Exists(path)) File.Delete(path);
-                return true;
-            }
-            catch { return false; }
         }
 
         private static string SanitizeFileName(string name)

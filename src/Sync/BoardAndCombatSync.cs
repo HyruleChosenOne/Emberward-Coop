@@ -104,7 +104,7 @@ namespace EmberwardCoop.Sync
             int speedType = r.ReadInt32();
             var ownership = _session()?.Ownership;
 
-            int bCount = r.ReadInt32();
+            int bCount = r.ReadBoundedCount(512);
             var hostBlockPositions = new List<Vector3>(bCount);
             for (int i = 0; i < bCount; i++)
             {
@@ -123,7 +123,7 @@ namespace EmberwardCoop.Sync
                     ownership?.RegisterExistingBlockOwner(existingBlock, ownerId);
             }
 
-            int tCount = r.ReadInt32();
+            int tCount = r.ReadBoundedCount(512);
             var hostTowerPositions = new List<Vector3>(tCount);
             for (int i = 0; i < tCount; i++)
             {
@@ -906,7 +906,7 @@ namespace EmberwardCoop.Sync
             {
                 using (NetworkScope.Enter())
                 {
-                    // In Separate Independent Draft mode, let Client open the chest for their own independent discover pick!
+                    // Separate mode lets clients open chests for their own independent discover pick.
                     if (_session()?.Ruleset.AllowsClientIndependentDraftsAndShops ?? false)
                     {
                         try { chest.OpenChest(); } catch { }

@@ -48,6 +48,7 @@ namespace EmberwardCoop.Presence
         }
 
         private readonly List<ActiveEffect> _effects = new List<ActiveEffect>();
+        private static Material _sharedParticleMat;
         private float _lastLocalPingTime;
 
         private bool _holdingPingKey;
@@ -111,7 +112,9 @@ namespace EmberwardCoop.Presence
             bool wasActive = _holdingPingKey || _wheelVisible;
             _holdingPingKey = false;
             CoopInputGuard.IsPingKeyHolding = false;
-            HideWheel(absorbRelease: wasActive && absorbRelease);
+            HideWheel(absorbRelease: false);
+            if (wasActive && absorbRelease)
+                CoopInputGuard.NotifyWheelClosed(waitForMouseUp: true);
         }
 
         public void TryHandleLocalPingInput()
@@ -410,7 +413,7 @@ namespace EmberwardCoop.Presence
             Vector3 pos = r.ReadVector3();
             var kind = (PingKind)r.ReadByte();
 
-            if (actorId != _net.LocalPlayerId)
+            if (actorId != _net.LocalPlayerId && !CoopConfig.MuteTeammateStickers.Value)
                 SpawnPingVisual(actorId, pos, kind);
 
             if (_net.IsHost)
@@ -453,7 +456,6 @@ namespace EmberwardCoop.Presence
             {
                 NativeAssetRegistry.EnsureScanned();
 
-                // Native Emberward ground rune/ring sprite decal (zero primitive Unity cylinders!)
                 var ring = new GameObject("EWCoop_PulseRing");
                 ring.layer = 2;
                 ring.transform.position = new Vector3(pos.x, pos.y + 0.08f, pos.z);
@@ -526,6 +528,7 @@ namespace EmberwardCoop.Presence
                     }
 
                     tmp = NativeStyleProvider.CreateLabel(lblObj.transform, labelText, 12f, color, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true);
+                    lblRect.localScale = Vector3.one * CoopConfig.GetEffectiveStickerScale();
                 }
 
                 _effects.Add(new ActiveEffect
@@ -586,8 +589,12 @@ namespace EmberwardCoop.Presence
                 var renderer = go.GetComponent<ParticleSystemRenderer>();
                 if (renderer != null)
                 {
-                    var shader = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/Unlit");
-                    if (shader != null) renderer.material = new Material(shader) { color = color };
+                    if (_sharedParticleMat == null)
+                    {
+                        var shader = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/Unlit");
+                        if (shader != null) _sharedParticleMat = new Material(shader) { color = Color.white };
+                    }
+                    if (_sharedParticleMat != null) renderer.sharedMaterial = _sharedParticleMat;
                 }
                 ps.Emit(count);
                 UnityEngine.Object.Destroy(go, 1.2f);

@@ -13,26 +13,15 @@ namespace EmberwardCoop.UI
         public static TMP_FontAsset PrimaryFont => NativeAssetRegistry.PrimaryFont;
         public static Material PrimaryFontMaterial => NativeAssetRegistry.PrimaryFontMaterial;
 
-        public static Sprite NativeWindowSprite => NativeAssetRegistry.GetWindowPanelSprite();
-        public static Sprite NativeSubPanelSprite => NativeAssetRegistry.GetSubPanelSprite();
-        public static Sprite NativeButtonSprite => NativeAssetRegistry.GetButtonSprite();
-        public static Sprite NativeTabSprite => NativeAssetRegistry.GetTabSprite();
-        public static Sprite NativeCircleSprite => NativeAssetRegistry.GetCircleBadgeSprite();
         public static Sprite NativeCoinSprite => NativeAssetRegistry.GetCoinIconSprite();
         public static Sprite NativeCrownSprite => NativeAssetRegistry.GetCrownIconSprite();
-        public static Sprite NativeRefreshSprite => NativeAssetRegistry.GetRefreshIconSprite();
-        public static Sprite NativeCheckSprite => NativeAssetRegistry.GetCheckIconSprite();
-        public static Sprite NativeGearSprite => NativeAssetRegistry.GetGearIconSprite();
-        public static Sprite NativePanelSprite => NativeWindowSprite;
 
         public static Color PanelBg => EmberwardTheme.WindowSurface;
         public static Color PanelSubBg => EmberwardTheme.SubPanelSurface;
         public static Color PanelWellBg => EmberwardTheme.WellSurface;
         public static Color CardBg => EmberwardTheme.CardSurface;
-        public static Color CardHoverBg => EmberwardTheme.CardHoverSurface;
         public static Color HudBg => EmberwardTheme.HudSurface;
         public static Color TooltipBg => EmberwardTheme.TooltipSurface;
-        public static Color ChatBg => EmberwardTheme.ChatSurface;
 
         public static Color EmberGold => EmberwardTheme.EmberGold;
         public static Color EmberGoldSoft => EmberwardTheme.EmberGoldSoft;
@@ -64,10 +53,6 @@ namespace EmberwardCoop.UI
             NativeAssetRegistry.EnsureScanned();
         }
 
-        public static Sprite GetPanelSprite() => NativeAssetRegistry.GetWindowPanelSprite();
-        public static Sprite GetSubPanelSprite() => NativeAssetRegistry.GetSubPanelSprite();
-        public static Sprite GetButtonSprite() => NativeAssetRegistry.GetButtonSprite();
-        public static Sprite GetBadgePillSprite() => NativeAssetRegistry.GetBadgePillSprite();
         public static Sprite GetCircleSprite() => NativeAssetRegistry.GetCircleBadgeSprite();
 
         public static void ApplySpriteSmart(Image img, Sprite sp, bool preferSliced = true, float ppuMultiplier = 1f)
@@ -328,11 +313,6 @@ namespace EmberwardCoop.UI
 
         private static bool ColorsNear(Color a, Color b)
             => Mathf.Abs(a.r - b.r) < 0.02f && Mathf.Abs(a.g - b.g) < 0.02f && Mathf.Abs(a.b - b.b) < 0.02f;
-
-        public static GameObject CreateWell(Transform parent, string name)
-        {
-            return CreatePanel(parent, name, PanelWellBg, addBorder: false, isSubPanel: true, roleOverride: PanelSurfaceRole.Well);
-        }
 
         public static GameObject CreateBadgePill(Transform parent, string name, Color bgColor, bool addBorder = false)
         {
@@ -617,9 +597,20 @@ namespace EmberwardCoop.UI
             bgImg.color = EmberwardTheme.ResolveSpriteTint(wellSp, EmberwardTheme.WellSurface, PanelSurfaceRole.Well);
             bgImg.raycastTarget = clickable;
 
+            // Place the frame behind PortraitMask so filled frame sprites never draw a color wash over character portraits.
+            var frameGo = new GameObject("AvatarFrame");
+            frameGo.transform.SetParent(root.transform, false);
+            StretchFill(frameGo.AddComponent<RectTransform>(), -1f, -1f);
+            var frameImg = frameGo.AddComponent<Image>();
+            Sprite frameSprite = NativeAssetRegistry.GetAvatarFrameSprite(selected);
+            ApplySpriteSmart(frameImg, frameSprite, preferSliced: true);
+            frameImg.color = selected ? EmberGold : EmberBorder;
+            frameImg.preserveAspect = !NativeAssetRegistry.HasValid9SliceBorder(frameSprite);
+            frameImg.raycastTarget = false;
+
             var maskGo = new GameObject("PortraitMask");
             maskGo.transform.SetParent(root.transform, false);
-            float pad = Mathf.Clamp(size * 0.08f, 2f, 5f);
+            float pad = Mathf.Clamp(size * 0.08f, 2f, 4f);
             StretchFill(maskGo.AddComponent<RectTransform>(), pad, pad);
             maskGo.AddComponent<RectMask2D>();
 
@@ -631,17 +622,6 @@ namespace EmberwardCoop.UI
             portImg.color = Color.white;
             portImg.preserveAspect = true;
             portImg.raycastTarget = false;
-
-            var frameGo = new GameObject("AvatarFrame");
-            frameGo.transform.SetParent(root.transform, false);
-            StretchFill(frameGo.AddComponent<RectTransform>(), -1f, -1f);
-            var frameImg = frameGo.AddComponent<Image>();
-            Sprite frameSprite = NativeAssetRegistry.GetAvatarFrameSprite(selected);
-            ApplySpriteSmart(frameImg, frameSprite, preferSliced: true);
-            // Keep character portraits and portrait frames neutral/untinted; player colors apply to names only.
-            frameImg.color = selected ? EmberGold : EmberBorder;
-            frameImg.preserveAspect = !NativeAssetRegistry.HasValid9SliceBorder(frameSprite);
-            frameImg.raycastTarget = false;
 
             if (showEditBadge)
             {

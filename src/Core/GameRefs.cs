@@ -69,28 +69,28 @@ namespace EmberwardCoop.Core
         public static CoinPage GetCoinPage()
         {
             if (_coinPage == null && IsInTitle)
-                _coinPage = UnityEngine.Object.FindObjectOfType<CoinPage>();
+                _coinPage = UnityEngine.Object.FindFirstObjectByType<CoinPage>();
             return _coinPage;
         }
 
         public static MapSceneProcess GetMapSceneProcess()
         {
             if (_mapSceneProcess == null && IsInMap)
-                _mapSceneProcess = UnityEngine.Object.FindObjectOfType<MapSceneProcess>();
+                _mapSceneProcess = UnityEngine.Object.FindFirstObjectByType<MapSceneProcess>();
             return _mapSceneProcess;
         }
 
         public static UI_Button_BackToTitle GetBackToTitleButton()
         {
             if (_backToTitleBtn == null && IsInMap)
-                _backToTitleBtn = UnityEngine.Object.FindObjectOfType<UI_Button_BackToTitle>();
+                _backToTitleBtn = UnityEngine.Object.FindFirstObjectByType<UI_Button_BackToTitle>();
             return _backToTitleBtn;
         }
 
         public static UI_PauseMenu GetPauseMenu()
         {
             if (_pauseMenu == null && IsInBattle)
-                _pauseMenu = UnityEngine.Object.FindObjectOfType<UI_PauseMenu>(true);
+                _pauseMenu = UnityEngine.Object.FindFirstObjectByType<UI_PauseMenu>(FindObjectsInactive.Include);
             return _pauseMenu;
         }
 
@@ -113,21 +113,21 @@ namespace EmberwardCoop.Core
         public static UI_Victory_Popup GetVictoryPopup()
         {
             if (_victoryPopup == null && IsInBattle)
-                _victoryPopup = UnityEngine.Object.FindObjectOfType<UI_Victory_Popup>(true);
+                _victoryPopup = UnityEngine.Object.FindFirstObjectByType<UI_Victory_Popup>(FindObjectsInactive.Include);
             return _victoryPopup;
         }
 
         public static UI_Defeat_Popup GetDefeatPopup()
         {
             if (_defeatPopup == null && IsInBattle)
-                _defeatPopup = UnityEngine.Object.FindObjectOfType<UI_Defeat_Popup>(true);
+                _defeatPopup = UnityEngine.Object.FindFirstObjectByType<UI_Defeat_Popup>(FindObjectsInactive.Include);
             return _defeatPopup;
         }
 
         public static CardController GetCardController()
         {
             if (_cardController == null && IsInBattle)
-                _cardController = UnityEngine.Object.FindObjectOfType<CardController>();
+                _cardController = UnityEngine.Object.FindFirstObjectByType<CardController>();
             return _cardController;
         }
 
@@ -138,7 +138,7 @@ namespace EmberwardCoop.Core
                 var cc = GetCardController();
                 _playerDeck = (cc != null && cc.ui_PlayerDeck != null)
                     ? cc.ui_PlayerDeck
-                    : UnityEngine.Object.FindObjectOfType<UI_PlayerDeck>();
+                    : UnityEngine.Object.FindFirstObjectByType<UI_PlayerDeck>();
             }
             return _playerDeck;
         }
@@ -146,56 +146,56 @@ namespace EmberwardCoop.Core
         public static UI_PlayerStatus GetPlayerStatus()
         {
             if (_playerStatus == null && IsInBattle)
-                _playerStatus = UnityEngine.Object.FindObjectOfType<UI_PlayerStatus>();
+                _playerStatus = UnityEngine.Object.FindFirstObjectByType<UI_PlayerStatus>();
             return _playerStatus;
         }
 
         public static UI_Button_StartWave GetStartWaveButton()
         {
             if (_startWaveBtn == null && IsInBattle)
-                _startWaveBtn = UnityEngine.Object.FindObjectOfType<UI_Button_StartWave>();
+                _startWaveBtn = UnityEngine.Object.FindFirstObjectByType<UI_Button_StartWave>();
             return _startWaveBtn;
         }
 
         public static UI_GameSpeedControl GetSpeedControl()
         {
             if (_speedCtrl == null && IsInBattle)
-                _speedCtrl = UnityEngine.Object.FindObjectOfType<UI_GameSpeedControl>();
+                _speedCtrl = UnityEngine.Object.FindFirstObjectByType<UI_GameSpeedControl>();
             return _speedCtrl;
         }
 
         public static UI_QuestStatus GetQuestStatus()
         {
             if (_questStatus == null && IsInBattle)
-                _questStatus = UnityEngine.Object.FindObjectOfType<UI_QuestStatus>(true);
+                _questStatus = UnityEngine.Object.FindFirstObjectByType<UI_QuestStatus>(FindObjectsInactive.Include);
             return _questStatus;
         }
 
         public static UI_TowerControl GetTowerControl()
         {
             if (_towerControl == null && IsInBattle)
-                _towerControl = UnityEngine.Object.FindObjectOfType<UI_TowerControl>(true);
+                _towerControl = UnityEngine.Object.FindFirstObjectByType<UI_TowerControl>(FindObjectsInactive.Include);
             return _towerControl;
         }
 
         public static UI_NextWaveEnemy GetNextWaveEnemy()
         {
             if (_nextWaveEnemy == null && IsInBattle)
-                _nextWaveEnemy = UnityEngine.Object.FindObjectOfType<UI_NextWaveEnemy>(true);
+                _nextWaveEnemy = UnityEngine.Object.FindFirstObjectByType<UI_NextWaveEnemy>(FindObjectsInactive.Include);
             return _nextWaveEnemy;
         }
 
         public static UI_StageProgress GetStageProgress()
         {
             if (_stageProgress == null && IsInBattle)
-                _stageProgress = UnityEngine.Object.FindObjectOfType<UI_StageProgress>(true);
+                _stageProgress = UnityEngine.Object.FindFirstObjectByType<UI_StageProgress>(FindObjectsInactive.Include);
             return _stageProgress;
         }
 
         public static UI_PlayerTowerList GetPlayerTowerList()
         {
             if (_playerTowerList == null && IsInBattle)
-                _playerTowerList = UnityEngine.Object.FindObjectOfType<UI_PlayerTowerList>(true);
+                _playerTowerList = UnityEngine.Object.FindFirstObjectByType<UI_PlayerTowerList>(FindObjectsInactive.Include);
             return _playerTowerList;
         }
 
@@ -212,7 +212,7 @@ namespace EmberwardCoop.Core
                 catch { }
 
                 if (_cameraController == null)
-                    _cameraController = UnityEngine.Object.FindObjectOfType<CameraController>();
+                    _cameraController = UnityEngine.Object.FindFirstObjectByType<CameraController>();
             }
             return _cameraController;
         }
@@ -220,7 +220,7 @@ namespace EmberwardCoop.Core
         public static InteractionManager GetInteractionManager()
         {
             if (_interactionManager == null && IsInBattle)
-                _interactionManager = UnityEngine.Object.FindObjectOfType<InteractionManager>();
+                _interactionManager = UnityEngine.Object.FindFirstObjectByType<InteractionManager>();
             return _interactionManager;
         }
 
@@ -282,7 +282,7 @@ namespace EmberwardCoop.Core
         public static UI_Notification GetNotification()
         {
             if (_notification == null)
-                _notification = UnityEngine.Object.FindObjectOfType<UI_Notification>(true);
+                _notification = UnityEngine.Object.FindFirstObjectByType<UI_Notification>(FindObjectsInactive.Include);
             return _notification;
         }
 
@@ -323,12 +323,6 @@ namespace EmberwardCoop.Core
         {
             try { EventMgr.SendEvent<T>(BoxEvent(evt), arg); }
             catch (Exception ex) { CoopLogger.Debug(LogCategory.Sync, $"SendEventRef<{typeof(T).Name}>({evt}) failed: {ex.Message}"); }
-        }
-
-        public static void SendEventString(eGameEvents evt, string arg)
-        {
-            try { EventMgr.SendEvent<string>(BoxEvent(evt), arg); }
-            catch (Exception ex) { CoopLogger.Debug(LogCategory.Sync, $"SendEventString({evt}) failed: {ex.Message}"); }
         }
 
         public static void SetButtonLocked(Button btn, bool locked)
@@ -427,7 +421,7 @@ namespace EmberwardCoop.Core
 
         public static Obj_Chest FindChestAt(Vector3 pos, float maxDist = 1.25f)
         {
-            var chests = UnityEngine.Object.FindObjectsOfType<Obj_Chest>();
+            var chests = UnityEngine.Object.FindObjectsByType<Obj_Chest>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
             if (chests == null) return null;
 
             Obj_Chest best = null;
@@ -446,7 +440,7 @@ namespace EmberwardCoop.Core
 
         public static Obj_RuneStone FindRuneStoneAt(Vector3 pos, float maxDist = 1.25f)
         {
-            var stones = UnityEngine.Object.FindObjectsOfType<Obj_RuneStone>();
+            var stones = UnityEngine.Object.FindObjectsByType<Obj_RuneStone>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
             if (stones == null) return null;
 
             Obj_RuneStone best = null;

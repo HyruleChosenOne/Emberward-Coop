@@ -33,6 +33,7 @@ namespace EmberwardCoop.Presence
             public GameObject DiamondObj;
             public GameObject RingObj;
             public Material CursorMat;
+            public int LastColorIndex = -1;
             public GameObject TagObj;
             public RectTransform TagRect;
             public TMP_Text TagText;
@@ -169,7 +170,10 @@ namespace EmberwardCoop.Presence
             av.LastHeardTime = Time.unscaledTime;
 
             Color col = CoopConfig.GetPlayerColor(_net.GetPlayerColorIndex(pid));
-            _ghosts.UpdateGhost(pid, isPlacing, isTower, itemType, pos, euler, isValid, col);
+            if (CoopConfig.EnableGhostPreviews.Value)
+                _ghosts.UpdateGhost(pid, isPlacing, isTower, itemType, pos, euler, isValid, col);
+            else
+                _ghosts.HideGhost(pid);
 
             if (_net.IsHost)
             {
@@ -205,8 +209,27 @@ namespace EmberwardCoop.Presence
                     continue;
                 }
 
+                if (!CoopConfig.EnableGhostPreviews.Value)
+                    _ghosts.HideGhost(av.PlayerId);
+
+                if (!CoopConfig.ShowTeammateCursors.Value)
+                {
+                    if (av.CursorRoot != null && av.CursorRoot.activeSelf) av.CursorRoot.SetActive(false);
+                    if (av.TagObj != null && av.TagObj.activeSelf) av.TagObj.SetActive(false);
+                    continue;
+                }
+
                 EnsureAvatarVisuals(av);
                 av.CurrentPos = Vector3.Lerp(av.CurrentPos, av.TargetPos, lerpT);
+
+                int curColIdx = _net.GetPlayerColorIndex(av.PlayerId);
+                if (av.CursorMat != null && curColIdx != av.LastColorIndex)
+                {
+                    av.LastColorIndex = curColIdx;
+                    Color curCol = CoopConfig.GetPlayerColor(curColIdx);
+                    if (av.CursorMat.HasProperty("_BaseColor")) av.CursorMat.SetColor("_BaseColor", curCol);
+                    if (av.CursorMat.HasProperty("_Color")) av.CursorMat.SetColor("_Color", curCol);
+                }
 
                 if (av.CursorRoot != null)
                 {

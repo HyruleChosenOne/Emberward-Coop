@@ -52,11 +52,11 @@ namespace EmberwardCoop.Core
         private static bool IsVerboseCategoryEnabled(LogCategory category) => category switch
         {
             LogCategory.Net => CoopConfig.DebugLogNetwork?.Value ?? false,
-            LogCategory.Sync => CoopConfig.DebugLogSync?.Value ?? true,
+            LogCategory.Sync => CoopConfig.DebugLogSync?.Value ?? false,
             LogCategory.Hash => CoopConfig.DebugLogStateHash?.Value ?? false,
-            LogCategory.Quest => CoopConfig.DebugLogQuests?.Value ?? true,
-            LogCategory.Modal => CoopConfig.DebugLogModals?.Value ?? true,
-            _ => true
+            LogCategory.Quest => CoopConfig.DebugLogQuests?.Value ?? false,
+            LogCategory.Modal => CoopConfig.DebugLogModals?.Value ?? false,
+            _ => false
         };
 
         public static void Info(LogCategory category, string message)

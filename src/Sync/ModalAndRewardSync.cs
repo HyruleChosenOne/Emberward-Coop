@@ -27,8 +27,7 @@ namespace EmberwardCoop.Sync
         RoguelitePerk = 16,
         TowerArrange = 17,
         Victory = 18,
-        Defeat = 19,
-        SpecialEvent = 20
+        Defeat = 19
     }
 
     public sealed class ModalAndRewardSync
@@ -150,8 +149,7 @@ namespace EmberwardCoop.Sync
             ActiveHostModalBanner = "";
             OnHostModalChanged?.Invoke(CoopModalKind.None, "");
 
-            // Only auto-close orphan client popups in Host-Shared Draft mode; in Simultaneous Independent mode
-            // clients manage their own Shop / Reward / Draft windows cleanly without interference!
+            // Only auto-close orphan client popups in Host-Shared Draft mode; Separate mode lets clients finish independently.
             if (!(_session()?.Ruleset.AllowsClientIndependentDraftsAndShops ?? false))
                 CloseOrphanClientRewardPopups();
         }
@@ -213,35 +211,40 @@ namespace EmberwardCoop.Sync
             catch { }
         }
 
+        public static CoopModalKind ClassifyPopup(Il2CppSystem.Object popup)
+        {
+            if (popup == null) return CoopModalKind.None;
+            string t = popup.GetIl2CppType()?.Name ?? "";
+
+            if (t.Contains("TetrisDraft")) return CoopModalKind.TetrisDraft;
+            if (t.Contains("ChooseRewardCard")) return CoopModalKind.RewardDraft;
+            if (t.Contains("DiscoverCard")) return CoopModalKind.DiscoverChest;
+            if (t.Contains("MiniShop")) return CoopModalKind.MiniShop;
+            if (t.Contains("Shop")) return CoopModalKind.Shop;
+            if (t.Contains("MiniWorkshop")) return CoopModalKind.MiniWorkshop;
+            if (t.Contains("Workshop") || t.Contains("ModifyBlock") || t.Contains("RemoveCard")) return CoopModalKind.Workshop;
+            if (t.Contains("AddRuneToTetris")) return CoopModalKind.RuneForge;
+            if (t.Contains("Altar")) return CoopModalKind.Altar;
+            if (t.Contains("Campsite") || t.Contains("EmberRecover")) return CoopModalKind.Campsite;
+            if (t.Contains("Circus")) return CoopModalKind.Circus;
+            if (t.Contains("SecretVault")) return CoopModalKind.SecretVault;
+            if (t.Contains("Academy")) return CoopModalKind.Academy;
+            if (t.Contains("QuestReward")) return CoopModalKind.QuestReward;
+            if (t.Contains("Quest")) return CoopModalKind.QuestSelect;
+            if (t.Contains("RoguelitePerk") || t.Contains("ScrapMasterPerk") || t.Contains("SkeletonKingPerk") || t.Contains("KingStrategy")) return CoopModalKind.RoguelitePerk;
+            if (t.Contains("TowerArrange")) return CoopModalKind.TowerArrange;
+            if (t.Contains("Victory")) return CoopModalKind.Victory;
+            if (t.Contains("Defeat")) return CoopModalKind.Defeat;
+            return CoopModalKind.None;
+        }
+
         private static CoopModalKind DetectTopActiveModal()
         {
             try
             {
                 var uiMgr = UIManager.Instance;
                 if (uiMgr == null || !uiMgr.HasAnyPopupWindow()) return CoopModalKind.None;
-                var top = uiMgr.GetTopPopupWindow();
-                if (top == null) return CoopModalKind.None;
-                string t = top.GetIl2CppType()?.Name ?? "";
-
-                if (t.Contains("TetrisDraft")) return CoopModalKind.TetrisDraft;
-                if (t.Contains("ChooseRewardCard")) return CoopModalKind.RewardDraft;
-                if (t.Contains("DiscoverCard")) return CoopModalKind.DiscoverChest;
-                if (t.Contains("MiniShop")) return CoopModalKind.MiniShop;
-                if (t.Contains("Shop")) return CoopModalKind.Shop;
-                if (t.Contains("MiniWorkshop")) return CoopModalKind.MiniWorkshop;
-                if (t.Contains("Workshop") || t.Contains("ModifyBlock") || t.Contains("RemoveCard")) return CoopModalKind.Workshop;
-                if (t.Contains("AddRuneToTetris")) return CoopModalKind.RuneForge;
-                if (t.Contains("Altar")) return CoopModalKind.Altar;
-                if (t.Contains("Campsite") || t.Contains("EmberRecover")) return CoopModalKind.Campsite;
-                if (t.Contains("Circus")) return CoopModalKind.Circus;
-                if (t.Contains("SecretVault")) return CoopModalKind.SecretVault;
-                if (t.Contains("Academy")) return CoopModalKind.Academy;
-                if (t.Contains("QuestReward")) return CoopModalKind.QuestReward;
-                if (t.Contains("Quest")) return CoopModalKind.QuestSelect;
-                if (t.Contains("RoguelitePerk") || t.Contains("ScrapMasterPerk") || t.Contains("SkeletonKingPerk") || t.Contains("KingStrategy")) return CoopModalKind.RoguelitePerk;
-                if (t.Contains("TowerArrange")) return CoopModalKind.TowerArrange;
-                if (t.Contains("Victory")) return CoopModalKind.Victory;
-                if (t.Contains("Defeat")) return CoopModalKind.Defeat;
+                return ClassifyPopup(uiMgr.GetTopPopupWindow());
             }
             catch { }
             return CoopModalKind.None;

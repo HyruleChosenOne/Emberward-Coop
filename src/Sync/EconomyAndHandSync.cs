@@ -260,12 +260,12 @@ namespace EmberwardCoop.Sync
             int deckCount = r.ReadInt32();
             _ = r.ReadInt32();
 
-            int lCount = r.ReadInt32();
+            int lCount = r.ReadBoundedCount(64);
             var loadoutTypes = new int[lCount];
             var loadoutLevels = new int[lCount];
             for (int i = 0; i < lCount; i++) { loadoutTypes[i] = r.ReadInt32(); loadoutLevels[i] = r.ReadInt32(); }
 
-            int hCount = r.ReadInt32();
+            int hCount = r.ReadBoundedCount(128);
             var hostCards = new NetCardInfo[hCount];
             for (int i = 0; i < hCount; i++) hostCards[i] = NetCardInfo.Read(r);
 

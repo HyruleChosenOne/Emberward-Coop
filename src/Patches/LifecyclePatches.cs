@@ -50,9 +50,6 @@ namespace EmberwardCoop.Patches
             S.Run.BroadcastRunSnapshot(-1);
         }
 
-        // Protect BOTH Host and Client solo active-run saves during isolated co-op sessions.
-        // Host auto-saves are redirected to dedicated CoopSaves/*.json files; only explicit
-        // PlayerLifetimeData meta-progression commits pass through to solo storage.
         [HarmonyPatch(typeof(GameDataManager), nameof(GameDataManager.Save), new Type[0])]
         [HarmonyPrefix]
         public static bool GameDataManager_Save_Prefix()
@@ -83,8 +80,6 @@ namespace EmberwardCoop.Patches
             return false;
         }
 
-        // Last-line guardrail: even if any vanilla path calls SerializeCurrentDataToCache directly
-        // during co-op, temporarily swap back the unmodified solo GameplayData so it can never be overwritten.
         [HarmonyPatch(typeof(GameDataManager), nameof(GameDataManager.SerializeCurrentDataToCache), new[] { typeof(string), typeof(bool) })]
         [HarmonyPrefix]
         public static void GameDataManager_SerializeCache_Prefix(GameDataManager __instance, out bool __state)
@@ -95,13 +90,13 @@ namespace EmberwardCoop.Patches
         public static void GameDataManager_SerializeCache_Finalizer(GameDataManager __instance, bool __state)
             => SoloSaveGuard.EndSoloSafeSerialize(__instance, __state);
 
-        // Co-op-only memory unlock overrides: strictly active in memory while connected in co-op with
-        // "Unlock All Maps/Modes" enabled; never mutates PlayerLifetimeData or solo savefiles.
+        // Co-op-only memory unlock overrides: strictly active in memory while inside the Co-op Menu
+        // or an active Co-op session with "Unlock All Maps/Modes (Co-op Only)" enabled.
         [HarmonyPatch(typeof(PlayerLifetimeData), nameof(PlayerLifetimeData.IsWorldUnlocked), new[] { typeof(eGameDifficultyType), typeof(eWorldType) })]
         [HarmonyPostfix]
         public static void PlayerLifetimeData_IsWorldUnlocked_Postfix(ref bool __result)
         {
-            if (!__result && PartyUnlockResolver.CoopUnlockAllActive && !PartyUnlockResolver.IsBypassingOverrideForRealRead && S != null && S.Net.IsConnected)
+            if (!__result && PartyUnlockResolver.IsCoopUnlockAllEffective())
                 __result = true;
         }
 
@@ -109,7 +104,7 @@ namespace EmberwardCoop.Patches
         [HarmonyPostfix]
         public static void PlayerLifetimeData_IsWorldUnlockedAny_Postfix(ref bool __result)
         {
-            if (!__result && PartyUnlockResolver.CoopUnlockAllActive && !PartyUnlockResolver.IsBypassingOverrideForRealRead && S != null && S.Net.IsConnected)
+            if (!__result && PartyUnlockResolver.IsCoopUnlockAllEffective())
                 __result = true;
         }
 
@@ -117,7 +112,23 @@ namespace EmberwardCoop.Patches
         [HarmonyPostfix]
         public static void PlayerLifetimeData_IsCharacterUnlocked_Postfix(ref bool __result)
         {
-            if (!__result && PartyUnlockResolver.CoopUnlockAllActive && !PartyUnlockResolver.IsBypassingOverrideForRealRead && S != null && S.Net.IsConnected)
+            if (!__result && PartyUnlockResolver.IsCoopUnlockAllEffective())
+                __result = true;
+        }
+
+        [HarmonyPatch(typeof(PlayerLifetimeData), nameof(PlayerLifetimeData.IsAnyEndlessModeUnlocked), new Type[0])]
+        [HarmonyPostfix]
+        public static void PlayerLifetimeData_IsAnyEndlessModeUnlocked_Postfix(ref bool __result)
+        {
+            if (!__result && PartyUnlockResolver.IsCoopUnlockAllEffective())
+                __result = true;
+        }
+
+        [HarmonyPatch(typeof(PlayerLifetimeData), nameof(PlayerLifetimeData.IsEnigmaSanctumUnlocked), new Type[0])]
+        [HarmonyPostfix]
+        public static void PlayerLifetimeData_IsEnigmaSanctumUnlocked_Postfix(ref bool __result)
+        {
+            if (!__result && PartyUnlockResolver.IsCoopUnlockAllEffective())
                 __result = true;
         }
 
@@ -147,7 +158,7 @@ namespace EmberwardCoop.Patches
 
         [HarmonyPatch(typeof(CoinPage), nameof(CoinPage.OnRequestActivateEndlessMode), new[] { typeof(EndlessMapActivateData) })]
         [HarmonyPrefix]
-        public static bool CoinPage_Endless_Prefix() => S == null || !S.Net.IsClient;
+        public static bool CoinPage_Endless_Prefix() => S == null || !S.Net.IsClient || NetworkScope.IsApplying;
 
         [HarmonyPatch(typeof(UI_SocialMediaButtons), nameof(UI_SocialMediaButtons.OnClickButton_SaveSlot), new Type[0])]
         [HarmonyPrefix]
@@ -159,80 +170,6 @@ namespace EmberwardCoop.Patches
         {
             if (S != null && S.Net.IsHost)
                 S.Run.BroadcastRunSnapshot(-1, "MapScene");
-        }
-
-        [HarmonyPatch(typeof(MapSceneProcess), nameof(MapSceneProcess.CR_StartNodeProc), new Type[0])]
-        [HarmonyPostfix]
-        public static void MapSceneProcess_CR_StartNodeProc_Postfix(MapSceneProcess __instance, Il2CppSystem.Collections.IEnumerator __result)
-        {
-            if (S == null || !S.Net.IsConnected || __result == null) return;
-
-            var gd = GameDataManager.instance?.GameplayData;
-            bool alreadyHydrated = S.Run.HasHydratedLocalStartLoadout
-                && gd?.list_LoadoutTowerData != null && gd.list_LoadoutTowerData.Count > 0
-                && gd?.list_ItemStorage != null && gd.list_ItemStorage.Count > 0;
-
-            // Skip redundant vanilla Start-node Hero/Academy picker when pre-run co-op Hero & Loadouts are already hydrated.
-            if (alreadyHydrated || (S.Net.IsClient && !S.Ruleset.AllowsClientIndependentDraftsAndShops))
-            {
-                var st = __result.TryCast<MapSceneProcess._CR_StartNodeProc_d__31>();
-                if (st != null) st.__1__state = -1;
-
-                if (S.Net.IsHost && alreadyHydrated && __instance != null && gd?.mapData?.list_MapNodeData != null)
-                {
-                    try
-                    {
-                        var nodes = gd.mapData.list_MapNodeData;
-                        MapNodeData startNode = null;
-                        for (int i = 0; i < nodes.Count; i++)
-                        {
-                            if (nodes[i] != null && nodes[i].MapNodeType == eStageType.START)
-                            {
-                                startNode = nodes[i];
-                                break;
-                            }
-                        }
-
-                        if (startNode != null && !startNode.isCleared)
-                        {
-                            startNode.isCleared = true;
-                            startNode.State = eMapNodeState.COMPLETED;
-                            if (startNode.connectedIndex != null)
-                            {
-                                for (int c = 0; c < startNode.connectedIndex.Count; c++)
-                                {
-                                    int nextIdx = startNode.connectedIndex[c];
-                                    if (nextIdx >= 0 && nextIdx < nodes.Count && nodes[nextIdx] != null)
-                                        nodes[nextIdx].State = eMapNodeState.AVALIABLE;
-                                }
-                            }
-                            gd.SetCurrentMapStep(Math.Max(1, gd.curMapStep));
-
-                            var uiNodes = __instance.mapManager?.list_MapNodes;
-                            if (uiNodes != null && uiNodes.Count == nodes.Count)
-                            {
-                                for (int i = 0; i < uiNodes.Count; i++)
-                                {
-                                    if (uiNodes[i] == null || nodes[i] == null) continue;
-                                    uiNodes[i].mapNodeData.State = nodes[i].State;
-                                    uiNodes[i].mapNodeData.isCleared = nodes[i].isCleared;
-                                    uiNodes[i].SwitchState(nodes[i].State);
-                                    uiNodes[i].SetCompleted(nodes[i].isCleared, true);
-                                }
-                                __instance.StartCoroutine(__instance.CR_UpdateMapNodeState());
-                            }
-                            __instance.isInNodeProcess = false;
-                            __instance.isWaitingForPlayerSelectNode = true;
-                            S.Run.BroadcastRunSnapshot(-1, "MapScene");
-                            S.SaveActiveCoopRun("start_ready");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        CoopLogger.Warn(LogCategory.Sync, $"StartNode skip advance warning: {ex.Message}");
-                    }
-                }
-            }
         }
 
         [HarmonyPatch(typeof(MapSceneProcess), nameof(MapSceneProcess.OnClickMapNodeButton), new[] { typeof(MapNode) })]
@@ -351,7 +288,7 @@ namespace EmberwardCoop.Patches
                     difficulty: gd != null ? gd.difficulty : eGameDifficultyType.NORMAL,
                     stageType: id != null ? id.stageType : (isFinalBoss ? eStageType.BOSS : eStageType.BATTLE),
                     mapStep: gd != null ? gd.curMapStep : 0,
-                    characterType: gd != null ? gd.characterType : S.LobbySetup.HostHero);
+                    characterType: gd != null ? gd.characterType : eCharacterType.BASIC);
 
                 if (!isFinalBoss)
                     S.SaveActiveCoopRun("stage_clear");
@@ -369,8 +306,13 @@ namespace EmberwardCoop.Patches
             var gd = gdm?.GameplayData;
             var id = gdm?.IntermediateData;
 
-            if (S.Net.IsClient && id?.mapNodeData != null && !string.IsNullOrEmpty(S.Run.PendingEnvSceneName))
-                id.mapNodeData.stageEnvSceneName = S.Run.PendingEnvSceneName;
+            if (S.Net.IsClient && id != null && !string.IsNullOrEmpty(S.Run.PendingEnvSceneName))
+            {
+                if (id.mapNodeData != null)
+                    id.mapNodeData.stageEnvSceneName = S.Run.PendingEnvSceneName;
+                if (string.IsNullOrEmpty(id.stageName))
+                    id.stageName = S.Run.PendingEnvSceneName;
+            }
 
             int stageSeed = 12345;
             if (id?.mapNodeData != null && id.mapNodeData.randomSeed != 0)
@@ -381,16 +323,6 @@ namespace EmberwardCoop.Patches
                 stageSeed = gd.randomSeed + gd.curMapStep * 1000 + gd.curMapNodeIndex;
 
             S.Run.PendingStageSeed = stageSeed;
-
-            // Guarantee GameplayData has starting towers & blocks BEFORE MainGame/IngameData initializes.
-            var localChoice = S.Ruleset.UsesIndividualLoadouts ? S.Net.LocalLoadout : S.LobbySetup.HostSharedLoadout;
-            int loadoutSeed = S.Ruleset.UsesIndividualLoadouts ? unchecked(stageSeed ^ (S.Net.LocalPlayerId * 73856093)) : stageSeed;
-            if (gd != null && ((gd.list_LoadoutTowerData == null || gd.list_LoadoutTowerData.Count == 0) ||
-                               (gd.list_ItemStorage == null || gd.list_ItemStorage.Count == 0)))
-            {
-                LoadoutCatalog.HydrateGameplayData(gd, S.LobbySetup.HostHero, localChoice, loadoutSeed, forceOverwriteInventory: false);
-            }
-
             UnityEngine.Random.InitState(stageSeed);
         }
 
@@ -400,22 +332,11 @@ namespace EmberwardCoop.Patches
         {
             if (S == null || !S.Net.IsConnected) return;
 
-            var localChoice = S.Ruleset.UsesIndividualLoadouts ? S.Net.LocalLoadout : S.LobbySetup.HostSharedLoadout;
-            int loadoutSeed = S.Ruleset.UsesIndividualLoadouts
-                ? unchecked(S.Run.PendingStageSeed ^ (S.Net.LocalPlayerId * 73856093))
-                : S.Run.PendingStageSeed;
-
-            // Guarantee non-empty tower bar, battle deck, and initial hand on BOTH Host and Client.
-            LoadoutCatalog.EnsureBattleDeckAndTowersHydrated(
-                S.LobbySetup.HostHero,
-                localChoice,
-                loadoutSeed,
-                allowLocalInitialDraw: S.Net.IsHost || !S.Ruleset.SyncsGlobalDeckAndHand);
-
-            if (S.Run.PendingRestoreCoin >= 0 && MainGame.Instance?.IngameData != null)
+            var ig = MainGame.Instance?.IngameData;
+            if (S.Run.PendingRestoreCoin >= 0 && ig != null)
             {
                 using (NetworkScope.Enter())
-                    MainGame.Instance.IngameData.SetCoin(S.Run.PendingRestoreCoin);
+                    ig.SetCoin(S.Run.PendingRestoreCoin);
                 S.Run.PendingRestoreCoin = -1;
             }
 

@@ -77,6 +77,8 @@ namespace EmberwardCoop.Sync
             string name = peer.Name;
             CoopLogger.Info(LogCategory.Sync, $"{name} is {(ready ? "READY" : "not ready")} for next wave.");
             GameRefs.ShowGameToast($"{name} is ready for next wave!", 2.0f);
+            if (ready && CoopConfig.ReadyCheckSoundCue.Value)
+                UI.NativeStyleProvider.PlayUiSelectSound(1.20f);
 
             if (ready && CoopConfig.WavePolicy.Value == WaveStartPolicy.ReadyCheckWithHostOverride && AreAllPeersWaveReady())
             {
@@ -97,6 +99,8 @@ namespace EmberwardCoop.Sync
             {
                 if (peer != null) { peer.IsWaveReady = true; _net.BroadcastRoster(); }
                 GameRefs.ShowGameToast($"{_net.GetPlayerName(senderId)} is ready for wave!", 2.0f);
+                if (CoopConfig.ReadyCheckSoundCue.Value)
+                    UI.NativeStyleProvider.PlayUiSelectSound(1.20f);
                 return;
             }
 
@@ -104,6 +108,8 @@ namespace EmberwardCoop.Sync
             {
                 if (peer != null) peer.IsWaveReady = true;
                 _net.BroadcastRoster();
+                if (CoopConfig.ReadyCheckSoundCue.Value)
+                    UI.NativeStyleProvider.PlayUiSelectSound(1.20f);
                 if (!AreAllPeersWaveReady())
                 {
                     GameRefs.ShowGameToast($"{_net.GetPlayerName(senderId)} is ready! Press Start Wave to begin.", 2.5f);

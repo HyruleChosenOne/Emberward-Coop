@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using EmberwardCoop.Core;
 using EmberwardCoop.Localization;
 using EmberwardCoop.Networking;
@@ -10,6 +9,20 @@ using UnityEngine;
 
 namespace EmberwardCoop.Sync
 {
+    public enum SharedVanillaSyncAction : byte
+    {
+        AcademySelectCardSet = 1,
+        AcademySelectRelic = 2,
+        AcademyRerollAll = 3,
+        AcademyRerollCardSet = 4,
+        RewardReroll = 5,
+        TetrisDraftToggleCard = 6,
+        TetrisDraftConfirm = 7,
+        TetrisDraftReset = 8,
+        EnigmaIntroClose = 9,
+        PopupCloseFinished = 10
+    }
+
     public sealed class SharedDraftOption
     {
         public int Index;
@@ -57,7 +70,7 @@ namespace EmberwardCoop.Sync
         public readonly Dictionary<int, int> MapNodeVotes = new Dictionary<int, int>();
         public event Action OnMapVotesChanged;
 
-        // Shared draft voting session (active in Shared Resources + Shared Draft mode)
+        // Shared draft voting session (active in Shared Resources mode on vanilla popups)
         public SharedDraftSession ActiveSharedDraft { get; private set; }
         public event Action OnSharedDraftChanged;
 
@@ -89,6 +102,7 @@ namespace EmberwardCoop.Sync
             ActiveSharedDraft = null;
             _hostActiveDraftPopup = null;
             _lastCapturedOptionsHash = 0;
+            _localDraftCounter = 0;
             PeerDraftBarrier.Clear();
             HostForceContinueRequested = false;
             BarrierWaitNotice = "";
@@ -132,6 +146,273 @@ namespace EmberwardCoop.Sync
             }
         }
 
+        public void BroadcastHomeHeroPreview(eCharacterType charType, eEmberType emberType)
+        {
+            if (!_net.IsHost || _net.RemotePeerCount == 0) return;
+            _net.BroadcastToClients(PacketType.EvtHomeHeroPreview, w =>
+            {
+                w.Write((int)charType);
+                w.Write((int)emberType);
+            });
+        }
+
+        public void BroadcastHomeHeroSelected(eCharacterType charType, eEmberType emberType)
+        {
+            if (!_net.IsHost) return;
+            _net.BroadcastToClients(PacketType.EvtHomeHeroSelected, w =>
+            {
+                w.Write((int)charType);
+                w.Write((int)emberType);
+            });
+            _session()?.Run.MarkDirty();
+        }
+
+        public void HandleEvtHomeHeroPreview(BinaryReader r)
+        {
+            var charType = (eCharacterType)r.ReadInt32();
+            var emberType = (eEmberType)r.ReadInt32();
+            if (!_net.IsClient) return;
+
+            using (NetworkScope.Enter())
+            {
+                try
+                {
+                    var popups = UnityEngine.Object.FindObjectsByType<UI_SelectCharacterPopup>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                    if (popups != null)
+                    {
+                        for (int i = 0; i < popups.Length; i++)
+                        {
+                            var p = popups[i];
+                            if (p != null && p.gameObject.activeInHierarchy && !p.IsWindowClosed)
+                            {
+                                p.OnCharacterSelected(charType);
+                                p.UpdateEmberInfo(emberType);
+                            }
+                        }
+                    }
+
+                    var igPopups = UnityEngine.Object.FindObjectsByType<UI_InGameSelectCharacterPopup>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                    if (igPopups != null)
+                    {
+                        for (int i = 0; i < igPopups.Length; i++)
+                        {
+                            var p = igPopups[i];
+                            if (p != null && p.gameObject.activeInHierarchy && !p.IsWindowClosed)
+                                p.OnCharacterSelected(charType, false);
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        public void HandleEvtHomeHeroSelected(BinaryReader r)
+        {
+            var charType = (eCharacterType)r.ReadInt32();
+            var emberType = (eEmberType)r.ReadInt32();
+            if (!_net.IsClient) return;
+
+            using (NetworkScope.Enter())
+            {
+                var gd = GameDataManager.instance?.GameplayData;
+                if (gd != null)
+                {
+                    gd.characterType = charType;
+                    gd.emberType = emberType;
+                }
+
+                try
+                {
+                    var popups = UnityEngine.Object.FindObjectsByType<UI_SelectCharacterPopup>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                    if (popups != null)
+                    {
+                        for (int i = 0; i < popups.Length; i++)
+                        {
+                            var p = popups[i];
+                            if (p != null && p.gameObject.activeInHierarchy && !p.IsWindowClosed)
+                            {
+                                p.OnCharacterSelected(charType);
+                                p.UpdateEmberInfo(emberType);
+                                p.OnClickOK();
+                            }
+                        }
+                    }
+
+                    var igPopups = UnityEngine.Object.FindObjectsByType<UI_InGameSelectCharacterPopup>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                    if (igPopups != null)
+                    {
+                        for (int i = 0; i < igPopups.Length; i++)
+                        {
+                            var p = igPopups[i];
+                            if (p != null && p.gameObject.activeInHierarchy && !p.IsWindowClosed)
+                            {
+                                p.OnCharacterSelected(charType, false);
+                                p.OnClickConfirmButton();
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CoopLogger.Warn(LogCategory.Modal, $"HandleEvtHomeHeroSelected warning: {ex.Message}");
+                }
+            }
+        }
+
+        public void BroadcastSharedVanillaDraftSync(SharedVanillaSyncAction action, int arg1 = 0, int arg2 = 0)
+        {
+            if (!_net.IsHost || _net.RemotePeerCount == 0) return;
+            var s = _session();
+            if (s != null && s.Ruleset.AllowsClientIndependentDraftsAndShops && action != SharedVanillaSyncAction.EnigmaIntroClose)
+                return;
+
+            _net.BroadcastToClients(PacketType.EvtSharedVanillaDraftSync, w =>
+            {
+                w.Write((byte)action);
+                w.Write(arg1);
+                w.Write(arg2);
+            });
+        }
+
+        public void HandleEvtSharedVanillaDraftSync(BinaryReader r)
+        {
+            var action = (SharedVanillaSyncAction)r.ReadByte();
+            int arg1 = r.ReadInt32();
+            int arg2 = r.ReadInt32();
+            if (!_net.IsClient) return;
+
+            var s = _session();
+            if (s != null && s.Ruleset.AllowsClientIndependentDraftsAndShops && action != SharedVanillaSyncAction.EnigmaIntroClose)
+                return;
+
+            using (NetworkScope.Enter())
+            {
+                try
+                {
+                    switch (action)
+                    {
+                        case SharedVanillaSyncAction.AcademySelectCardSet:
+                        {
+                            var acad = FindOpenPopup<UI_MapScene_Academy_Popup>();
+                            if (acad != null && !acad.isCardSetSelected)
+                                acad.OnCardSetClickedCallback(arg1);
+                            break;
+                        }
+                        case SharedVanillaSyncAction.AcademySelectRelic:
+                        {
+                            var acad = FindOpenPopup<UI_MapScene_Academy_Popup>();
+                            if (acad != null && !acad.isRelicSelected && acad.list_CreatedRelicCards != null && arg1 >= 0 && arg1 < acad.list_CreatedRelicCards.Count)
+                                acad.OnRelicCardClickedCallback(acad.list_CreatedRelicCards[arg1]);
+                            break;
+                        }
+                        case SharedVanillaSyncAction.AcademyRerollAll:
+                        {
+                            var acad = FindOpenPopup<UI_MapScene_Academy_Popup>();
+                            if (acad != null)
+                            {
+                                UnityEngine.Random.InitState(arg1);
+                                acad.OnRerollButtonClickedCallback();
+                            }
+                            break;
+                        }
+                        case SharedVanillaSyncAction.AcademyRerollCardSet:
+                        {
+                            var acad = FindOpenPopup<UI_MapScene_Academy_Popup>();
+                            if (acad != null)
+                            {
+                                UnityEngine.Random.InitState(arg2);
+                                acad.OnRequestAcademyCardSetReroll(arg1);
+                            }
+                            break;
+                        }
+                        case SharedVanillaSyncAction.RewardReroll:
+                        {
+                            var rew = FindOpenPopup<UI_ChooseRewardCardPopup>();
+                            if (rew != null)
+                            {
+                                UnityEngine.Random.InitState(arg1);
+                                rew.OnClickButton_Reroll();
+                            }
+                            break;
+                        }
+                        case SharedVanillaSyncAction.TetrisDraftToggleCard:
+                        {
+                            var td = FindOpenPopup<UI_TetrisDraft_Popup>();
+                            if (td != null && td.list_TetrisCandidateCards != null && arg1 >= 0 && arg1 < td.list_TetrisCandidateCards.Count)
+                                td.OnCardClicked(td.list_TetrisCandidateCards[arg1]);
+                            break;
+                        }
+                        case SharedVanillaSyncAction.TetrisDraftConfirm:
+                        {
+                            var td = FindOpenPopup<UI_TetrisDraft_Popup>();
+                            if (td != null) td.OnClickButton_OK();
+                            break;
+                        }
+                        case SharedVanillaSyncAction.TetrisDraftReset:
+                        {
+                            var td = FindOpenPopup<UI_TetrisDraft_Popup>();
+                            if (td != null) td.OnClickButton_Reset();
+                            break;
+                        }
+                        case SharedVanillaSyncAction.EnigmaIntroClose:
+                        {
+                            var intro = FindOpenPopup<UI_EnigmaSanctumIntro_Popup>();
+                            if (intro != null) intro.OnCloseButtonClicked();
+                            break;
+                        }
+                        case SharedVanillaSyncAction.PopupCloseFinished:
+                        {
+                            CloseTopClientSharedPopup();
+                            break;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    CoopLogger.Debug(LogCategory.Modal, $"HandleEvtSharedVanillaDraftSync({action}) warning: {ex.Message}");
+                }
+            }
+        }
+
+        private static T FindOpenPopup<T>() where T : APopupWindow
+        {
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsByType<T>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+                if (all != null)
+                {
+                    for (int i = 0; i < all.Length; i++)
+                        if (all[i] != null && all[i].gameObject.activeInHierarchy && !all[i].IsWindowClosed)
+                            return all[i];
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private static void CloseTopClientSharedPopup()
+        {
+            try
+            {
+                var uiMgr = UIManager.Instance;
+                if (uiMgr == null || !uiMgr.HasAnyPopupWindow()) return;
+                var top = uiMgr.GetTopPopupWindow();
+                if (top == null) return;
+                string name = top.GetIl2CppType()?.Name ?? "";
+                if (name.Contains("Setting") || name.Contains("Pause") || name.Contains("DeckList") ||
+                    name.Contains("Victory") || name.Contains("Defeat") || name.Contains("SelectCharacter"))
+                    return;
+
+                var popup = top.TryCast<APopupWindow>();
+                if (popup != null && !popup.IsWindowClosed)
+                {
+                    popup.OverrideIsWindowFinished(true);
+                    popup.CloseWindow();
+                }
+            }
+            catch { }
+        }
+
         public void CastMapNodeVote(int nodeIndex)
         {
             if (!_net.IsConnected || nodeIndex < 0) return;
@@ -142,7 +423,6 @@ namespace EmberwardCoop.Sync
                 return;
             }
 
-            // Host solo or single-player-in-lobby enters immediately without waiting on votes
             if (_net.RemotePeerCount == 0)
             {
                 ExecuteHostMapNodeSelection(nodeIndex);
@@ -210,7 +490,7 @@ namespace EmberwardCoop.Sync
 
         public void HandleEvtMapNodeVotes(BinaryReader r)
         {
-            int count = r.ReadInt32();
+            int count = r.ReadBoundedCount(32);
             MapNodeVotes.Clear();
             for (int i = 0; i < count; i++)
             {
@@ -291,7 +571,6 @@ namespace EmberwardCoop.Sync
 
             if (tied.Count == 1) return tied[0];
 
-            // Tie-break: Host's vote wins if Host voted for one of the tied nodes, else deterministic seed roll.
             if (MapNodeVotes.TryGetValue(0, out int hostVote) && tied.Contains(hostVote))
                 return hostVote;
 
@@ -338,18 +617,25 @@ namespace EmberwardCoop.Sync
             eStageType st = targetNode.mapNodeData.MapNodeType;
             bool isCombat = IsCombatStage(st);
 
-            // In Separate / Individual mode, open matching non-battle MapNode modals simultaneously on clients.
-            if (!isCombat && s.Ruleset.AllowsClientIndependentDraftsAndShops && _net.RemotePeerCount > 0)
+            int nodeSeed = targetNode.mapNodeData.randomSeed != 0
+                ? targetNode.mapNodeData.randomSeed
+                : unchecked((GameDataManager.instance?.GameplayData?.randomSeed ?? 1337) ^ (nodeIndex * 7919));
+
+            // Open vanilla non-combat MapNode modals on Clients in BOTH Shared and Separate modes.
+            if (!isCombat && _net.RemotePeerCount > 0)
             {
-                int nodeSeed = targetNode.mapNodeData.randomSeed != 0
-                    ? targetNode.mapNodeData.randomSeed
-                    : (GameDataManager.instance?.GameplayData?.randomSeed ?? 1337);
                 _net.BroadcastToClients(PacketType.EvtOpenPeerNodeModal, w =>
                 {
                     w.Write(nodeIndex);
                     w.Write((int)st);
                     w.Write(nodeSeed);
                 });
+            }
+
+            if (!isCombat)
+            {
+                int hostSeed = GetNextDeterministicDraftSeed(nodeSeed, 0);
+                UnityEngine.Random.InitState(hostSeed);
             }
 
             using (NetworkScope.Enter())
@@ -365,7 +651,7 @@ namespace EmberwardCoop.Sync
             int nodeSeed = r.ReadInt32();
 
             var s = _session();
-            if (!_net.IsClient || s == null || !s.Ruleset.AllowsClientIndependentDraftsAndShops) return;
+            if (!_net.IsClient || s == null) return;
             if (!GameRefs.IsInMap) return;
 
             try
@@ -377,7 +663,7 @@ namespace EmberwardCoop.Sync
                 var node = nodes[nodeIndex];
                 if (node == null) return;
 
-                // Seed client's independent shop/event/draft deterministically per player
+                // In Shared mode, salt=0 produces the exact same seed as Host; in Separate mode, salt=LocalPlayerId*73856093 rolls unique options.
                 int peerSeed = GetNextDeterministicDraftSeed(nodeSeed, _net.LocalPlayerId);
                 UnityEngine.Random.InitState(peerSeed);
 
@@ -422,7 +708,7 @@ namespace EmberwardCoop.Sync
                     }
                 }
 
-                CoopLogger.Info(LogCategory.Modal, $"Opened simultaneous client node modal: {stageType} (Node #{nodeIndex}).");
+                CoopLogger.Info(LogCategory.Modal, $"Opened client vanilla node modal: {stageType} (Node #{nodeIndex}, Seed {peerSeed}).");
             }
             catch (Exception ex)
             {
@@ -446,10 +732,6 @@ namespace EmberwardCoop.Sync
             var nd = nodes[nodeIndex]?.mapNodeData;
             return nd != null && nd.State == eMapNodeState.AVALIABLE;
         }
-
-        // ------------------------------------------------------------------
-        // SHARED DRAFT & CHOICE VOTING (Host Shared Draft mode)
-        // ------------------------------------------------------------------
 
         private void PollHostSharedDraftPopup()
         {
@@ -545,9 +827,9 @@ namespace EmberwardCoop.Sync
                 RerollsLeft = r.ReadInt32(),
                 CanSkip = r.ReadBoolean()
             };
-            int optCount = Math.Clamp(r.ReadInt32(), 0, 24);
+            int optCount = r.ReadBoundedCount(24);
             for (int i = 0; i < optCount; i++) d.Options.Add(SharedDraftOption.Read(r));
-            int vCount = Math.Clamp(r.ReadInt32(), 0, 16);
+            int vCount = r.ReadBoundedCount(16);
             for (int i = 0; i < vCount; i++)
             {
                 int pid = r.ReadInt32();
@@ -566,7 +848,20 @@ namespace EmberwardCoop.Sync
 
         public void VoteSharedDraftOption(int optionIndex)
         {
-            if (ActiveSharedDraft == null || !_net.IsConnected) return;
+            if (!_net.IsConnected) return;
+            if (ActiveSharedDraft == null)
+            {
+                if (_net.IsClient)
+                {
+                    _net.SendToHost(PacketType.CmdDraftVote, w =>
+                    {
+                        w.Write(-1);
+                        w.Write(optionIndex);
+                    });
+                }
+                return;
+            }
+
             int draftId = ActiveSharedDraft.DraftId;
 
             if (_net.IsClient)
@@ -588,10 +883,11 @@ namespace EmberwardCoop.Sync
 
         public void RequestSharedDraftReroll()
         {
-            if (ActiveSharedDraft == null || !_net.IsConnected) return;
+            if (!_net.IsConnected) return;
             if (_net.IsClient)
             {
-                _net.SendToHost(PacketType.CmdDraftReroll, w => w.Write(ActiveSharedDraft.DraftId));
+                int draftId = ActiveSharedDraft?.DraftId ?? -1;
+                _net.SendToHost(PacketType.CmdDraftReroll, w => w.Write(draftId));
                 return;
             }
             ExecuteHostSharedDraftReroll();
@@ -601,13 +897,19 @@ namespace EmberwardCoop.Sync
         {
             int draftId = r.ReadInt32();
             int optionIndex = r.ReadInt32();
-            if (!_net.IsHost || ActiveSharedDraft == null || ActiveSharedDraft.DraftId != draftId) return;
+            if (!_net.IsHost) return;
+            if (ActiveSharedDraft == null)
+            {
+                PollHostSharedDraftPopup();
+                if (ActiveSharedDraft == null) return;
+            }
+            if (draftId >= 0 && ActiveSharedDraft.DraftId != draftId) return;
 
             ActiveSharedDraft.Votes[senderId] = optionIndex;
             string pName = _net.GetPlayerName(senderId);
             string optName = optionIndex >= 0 && optionIndex < ActiveSharedDraft.Options.Count
                 ? ActiveSharedDraft.Options[optionIndex].DisplayName
-                : CoopLoc.T("draft.skip");
+                : $"#{optionIndex + 1}";
             GameRefs.ShowGameToast($"{pName} -> {optName}", 2.0f);
             BroadcastSharedDraftState();
             TryResolveHostSharedDraft(forcePick: false);
@@ -616,8 +918,8 @@ namespace EmberwardCoop.Sync
         public void HandleCmdDraftReroll(int senderId, BinaryReader r)
         {
             int draftId = r.ReadInt32();
-            if (!_net.IsHost || ActiveSharedDraft == null || ActiveSharedDraft.DraftId != draftId) return;
-            if (ActiveSharedDraft.RerollsLeft <= 0) return;
+            if (!_net.IsHost) return;
+            if (ActiveSharedDraft != null && draftId >= 0 && ActiveSharedDraft.DraftId != draftId) return;
 
             string pName = _net.GetPlayerName(senderId);
             CoopLogger.Info(LogCategory.Modal, $"{pName} triggered shared draft reroll.");
@@ -638,7 +940,6 @@ namespace EmberwardCoop.Sync
 
             if (!forcePick)
             {
-                // Auto-resolve only when ALL connected players (including Host) voted for the same option.
                 if (d.Votes.Count < _net.Roster.Count) return;
                 int firstOpt = int.MinValue;
                 foreach (var kv in d.Votes)
@@ -651,7 +952,6 @@ namespace EmberwardCoop.Sync
                 return;
             }
 
-            // Pick highest-voted option (Host tie-break)
             var counts = new Dictionary<int, int>();
             int bestVotes = 0;
             foreach (var kv in d.Votes)
@@ -686,6 +986,14 @@ namespace EmberwardCoop.Sync
                     _lastCapturedOptionsHash = 0;
                     return;
                 }
+
+                var acad = _hostActiveDraftPopup.TryCast<UI_MapScene_Academy_Popup>();
+                if (acad != null)
+                {
+                    acad.OnRerollButtonClickedCallback();
+                    _lastCapturedOptionsHash = 0;
+                    return;
+                }
             }
             catch (Exception ex)
             {
@@ -698,6 +1006,22 @@ namespace EmberwardCoop.Sync
             if (popup == null || popup.IsWindowClosed) return;
             try
             {
+                var acad = popup.TryCast<UI_MapScene_Academy_Popup>();
+                if (acad != null)
+                {
+                    if (!acad.isCardSetSelected && optionIndex >= 0)
+                    {
+                        acad.OnCardSetClickedCallback(optionIndex);
+                        _lastCapturedOptionsHash = 0;
+                    }
+                    else if (acad.isCardSetSelected && !acad.isRelicSelected && acad.list_CreatedRelicCards != null && optionIndex >= 0 && optionIndex < acad.list_CreatedRelicCards.Count)
+                    {
+                        acad.OnRelicCardClickedCallback(acad.list_CreatedRelicCards[optionIndex]);
+                        _lastCapturedOptionsHash = 0;
+                    }
+                    return;
+                }
+
                 var rew = popup.TryCast<UI_ChooseRewardCardPopup>();
                 if (rew != null)
                 {
@@ -800,6 +1124,38 @@ namespace EmberwardCoop.Sync
 
             try
             {
+                var acad = popup.TryCast<UI_MapScene_Academy_Popup>();
+                if (acad != null)
+                {
+                    kind = CoopModalKind.Academy;
+                    title = "Academy";
+                    if (!acad.isCardSetSelected && acad.list_CardSetData != null && acad.list_CardSetData.Count > 0)
+                    {
+                        for (int i = 0; i < acad.list_CardSetData.Count; i++)
+                        {
+                            var set = acad.list_CardSetData[i];
+                            eItemType firstTower = (set?.list_TowerCardData != null && set.list_TowerCardData.Count > 0 && set.list_TowerCardData[0] != null)
+                                ? set.list_TowerCardData[0].ItemType
+                                : eItemType.NONE;
+                            string label = firstTower != eItemType.NONE
+                                ? $"Set #{i + 1} ({WorldCatalog.GetItemShortName(firstTower)})"
+                                : $"Set #{i + 1}";
+                            options.Add(new SharedDraftOption { Index = i, ItemType = firstTower, CardType = eCardType.TOWER_CARD, DisplayName = label, Subtitle = "Academy" });
+                        }
+                        return options.Count > 0;
+                    }
+                    if (acad.isCardSetSelected && !acad.isRelicSelected && acad.list_CreatedRelicCards != null && acad.list_CreatedRelicCards.Count > 0)
+                    {
+                        for (int i = 0; i < acad.list_CreatedRelicCards.Count; i++)
+                        {
+                            var rc = acad.list_CreatedRelicCards[i];
+                            if (rc == null) continue;
+                            options.Add(new SharedDraftOption { Index = i, ItemType = rc.ItemType, CardType = eCardType.RELIC_CARD, DisplayName = SafeShopCardName(rc, rc.ItemType), Subtitle = "Relic" });
+                        }
+                        return options.Count > 0;
+                    }
+                }
+
                 var rew = popup.TryCast<UI_ChooseRewardCardPopup>();
                 if (rew != null && !rew.isSelected && rew.list_Cards != null && rew.list_Cards.Count > 0)
                 {
@@ -835,7 +1191,7 @@ namespace EmberwardCoop.Sync
                             ? packUi.rewardPackData.list_RewardData[0]
                             : null;
                         var it = first?.rewardCardData != null ? first.rewardCardData.ItemType : eItemType.NONE;
-                        string name = it != eItemType.NONE ? LoadoutCatalog.GetItemShortName(it) : $"Pack #{i + 1}";
+                        string name = it != eItemType.NONE ? WorldCatalog.GetItemShortName(it) : $"Pack #{i + 1}";
                         int cnt = packUi.rewardPackData?.list_RewardData?.Count ?? 1;
                         options.Add(new SharedDraftOption { Index = i, ItemType = it, CardType = first?.rewardCardData != null ? first.rewardCardData.CardType : eCardType.NONE, DisplayName = name, Subtitle = cnt > 1 ? $"+{cnt - 1} more" : "" });
                     }
@@ -916,7 +1272,7 @@ namespace EmberwardCoop.Sync
                 if (!string.IsNullOrWhiteSpace(n)) return n.Trim();
             }
             catch { }
-            return LoadoutCatalog.GetItemShortName(fallbackType);
+            return WorldCatalog.GetItemShortName(fallbackType);
         }
 
         private static int ComputeOptionsHash(CoopModalKind kind, List<SharedDraftOption> opts, int rerolls)
@@ -932,10 +1288,6 @@ namespace EmberwardCoop.Sync
                 return h;
             }
         }
-
-        // ------------------------------------------------------------------
-        // SEPARATE / INDIVIDUAL MODE DRAFTING BARRIER
-        // ------------------------------------------------------------------
 
         private void PollLocalDraftBarrierState()
         {
@@ -997,8 +1349,7 @@ namespace EmberwardCoop.Sync
             kind == CoopModalKind.SecretVault ||
             kind == CoopModalKind.QuestSelect ||
             kind == CoopModalKind.QuestReward ||
-            kind == CoopModalKind.RoguelitePerk ||
-            kind == CoopModalKind.SpecialEvent;
+            kind == CoopModalKind.RoguelitePerk;
 
         public void HandleCmdDraftBarrierState(int senderId, BinaryReader r)
         {
@@ -1039,7 +1390,7 @@ namespace EmberwardCoop.Sync
 
         public void HandleEvtDraftBarrierState(BinaryReader r)
         {
-            int count = r.ReadInt32();
+            int count = r.ReadBoundedCount(32);
             PeerDraftBarrier.Clear();
             for (int i = 0; i < count; i++)
             {

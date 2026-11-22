@@ -241,6 +241,7 @@ namespace EmberwardCoop.Patches
                         tmps[i].fontSizeMin = 12f;
                         tmps[i].fontSizeMax = Mathf.Max(16f, tmps[i].fontSizeMax);
                     }
+                    InjectHostSaveButton(__instance, parent);
                     return;
                 }
 

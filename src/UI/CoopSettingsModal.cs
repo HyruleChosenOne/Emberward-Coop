@@ -18,23 +18,35 @@ namespace EmberwardCoop.UI
         private CanvasGroup _winCg;
         private float _openAnimProgress = 1f;
         private bool _isOpen;
+        private bool _rosterSubscribed;
 
         private ConfigEntry<KeyCode> _rebindingTarget;
 
         private TMP_Text _titleText;
         private TMP_Text _langText;
         private TMP_Text _closeBtnText;
+        private TMP_Text _resetKeysBtnText;
 
         private readonly List<(string locKey, TMP_Text label)> _staticLabels = new List<(string, TMP_Text)>();
         private readonly List<(ConfigEntry<KeyCode> entry, TMP_Text btnText)> _keybindButtons = new List<(ConfigEntry<KeyCode>, TMP_Text)>();
 
+        private TMP_Text _colorRowLabel;
+        private TMP_Text _valPlayerColor;
+        private (TMP_Text txt, Image chk) _valUnlockAllCoop;
+        private (TMP_Text txt, Image chk) _valHideCodeDefault;
+
+        private (TMP_Text txt, Image chk) _valCompactHud;
+        private (TMP_Text txt, Image chk) _valAutoCollapseHud;
+        private (TMP_Text txt, Image chk) _valShowCursors;
+        private (TMP_Text txt, Image chk) _valShowGhosts;
+        private TMP_Text _valOwnershipMode;
+
         private TMP_Text _valStickerScale;
         private TMP_Text _valStickerVol;
         private (TMP_Text txt, Image chk) _valMuteStickers;
-        private (TMP_Text txt, Image chk) _valCompactHud;
+        private (TMP_Text txt, Image chk) _valReadySound;
         private (TMP_Text txt, Image chk) _valAutoPause;
-        private readonly List<(Image swatchBg, TMP_Text checkMark)> _colorSwatches = new List<(Image, TMP_Text)>();
-        private TMP_Text _colorRowLabel;
+        private (TMP_Text txt, Image chk) _valLockCamRadial;
 
         public bool IsOpen => _isOpen;
 
@@ -47,6 +59,14 @@ namespace EmberwardCoop.UI
         public void Open()
         {
             EnsureBuilt();
+            if (!_rosterSubscribed && Sync.SessionController.Instance != null)
+            {
+                _rosterSubscribed = true;
+                Sync.SessionController.Instance.Net.OnRosterUpdated += () =>
+                {
+                    if (_isOpen) RefreshLabels();
+                };
+            }
             _isOpen = true;
             _rebindingTarget = null;
             _openAnimProgress = 0f;
@@ -63,12 +83,6 @@ namespace EmberwardCoop.UI
             if (_root != null && _root.activeSelf)
                 _root.SetActive(false);
             if (wasOpen) NativeStyleProvider.PlayUiOpenSound(false);
-        }
-
-        public void Toggle()
-        {
-            if (_isOpen) Close();
-            else Open();
         }
 
         public void Tick()
@@ -141,7 +155,7 @@ namespace EmberwardCoop.UI
             _winRt = win.GetComponent<RectTransform>();
             _winRt.anchorMin = new Vector2(0.5f, 0.5f);
             _winRt.anchorMax = new Vector2(0.5f, 0.5f);
-            _winRt.sizeDelta = new Vector2(488f, 440f);
+            _winRt.sizeDelta = new Vector2(540f, 490f);
             _winCg = win.AddComponent<CanvasGroup>();
 
             var winFit = win.AddComponent<ContentSizeFitter>();
@@ -149,7 +163,7 @@ namespace EmberwardCoop.UI
             winFit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var vlg = win.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(20, 20, 17, 18);
+            vlg.padding = new RectOffset(20, 20, 16, 17);
             vlg.spacing = 7f;
             vlg.childControlWidth = true;
             vlg.childControlHeight = true;
@@ -163,39 +177,126 @@ namespace EmberwardCoop.UI
 
             NativeStyleProvider.CreateDivider(win.transform, "HdrDiv");
 
-            var scroll = NativeStyleProvider.CreateScrollView(win.transform, "ModSettingsScroll", NativeStyleProvider.PanelWellBg, out RectTransform contentRt, padding: 8f, spacing: 5f);
+            var scroll = NativeStyleProvider.CreateScrollView(win.transform, "ModSettingsScroll", NativeStyleProvider.PanelWellBg, out RectTransform contentRt, padding: 10f, spacing: 5f);
             var scrollLe = scroll.gameObject.AddComponent<LayoutElement>();
-            scrollLe.minHeight = 260f;
-            scrollLe.preferredHeight = 360f;
+            scrollLe.minHeight = 320f;
+            scrollLe.preferredHeight = 400f;
 
-            AddColorPickerRow(contentRt);
-            NativeStyleProvider.CreateDivider(contentRt, "ColorDiv");
+            AddSectionHeader(contentRt, "modcfg.sec_player");
+            AddColorStepperRow(contentRt);
+
+            _valUnlockAllCoop = AddToggleRow(contentRt, "modcfg.unlock_all_coop", () =>
+            {
+                bool next = !CoopConfig.UnlockAllMapsModes.Value;
+                CoopConfig.UnlockAllMapsModes.Value = next;
+                var session = Sync.SessionController.Instance;
+                if (session != null)
+                {
+                    session.Settings.UnlockAllMapsModes = next;
+                    session.RefreshPartyUnlocksAndValidateSelection(broadcast: session.Net.IsHost);
+                }
+                RefreshLabels();
+            });
+            var unlockHint = NativeStyleProvider.CreateLabel(contentRt, CoopLoc.T("modcfg.unlock_all_coop_desc"), 10.5f, NativeStyleProvider.TextMuted, TextAlignmentOptions.MidlineLeft, FontStyles.Italic, wordWrap: true);
+            _staticLabels.Add(("modcfg.unlock_all_coop_desc", unlockHint));
+
+            _valHideCodeDefault = AddToggleRow(contentRt, "modcfg.hide_code_default", () =>
+            {
+                CoopConfig.HideLobbyCodeByDefault.Value = !CoopConfig.HideLobbyCodeByDefault.Value;
+                RefreshLabels();
+            });
+
+            NativeStyleProvider.CreateDivider(contentRt, "Sec1Div");
+
+            AddSectionHeader(contentRt, "modcfg.sec_hud");
+
+            _valCompactHud = AddToggleRow(contentRt, "modcfg.compact_hud", () =>
+            {
+                CoopConfig.CompactHudMode.Value = !CoopConfig.CompactHudMode.Value;
+                RefreshLabels();
+            });
+
+            _valAutoCollapseHud = AddToggleRow(contentRt, "modcfg.auto_collapse_hud", () =>
+            {
+                CoopConfig.AutoCollapseHudDuringCombat.Value = !CoopConfig.AutoCollapseHudDuringCombat.Value;
+                RefreshLabels();
+            });
+
+            _valShowCursors = AddToggleRow(contentRt, "modcfg.show_cursors", () =>
+            {
+                CoopConfig.ShowTeammateCursors.Value = !CoopConfig.ShowTeammateCursors.Value;
+                RefreshLabels();
+            });
+
+            _valShowGhosts = AddToggleRow(contentRt, "modcfg.show_ghosts", () =>
+            {
+                CoopConfig.EnableGhostPreviews.Value = !CoopConfig.EnableGhostPreviews.Value;
+                RefreshLabels();
+            });
+
+            _valOwnershipMode = AddStepperRow(contentRt, "modcfg.ownership_rings",
+                () => { CoopConfig.CycleOwnershipIndicatorMode(-1); RefreshLabels(); },
+                () => { CoopConfig.CycleOwnershipIndicatorMode(1); RefreshLabels(); });
+
+            NativeStyleProvider.CreateDivider(contentRt, "Sec2Div");
+
+            AddSectionHeader(contentRt, "modcfg.sec_audio");
+
+            _valStickerScale = AddStepperRow(contentRt, "modcfg.sticker_scale",
+                () => { CoopConfig.CycleScalePreset(-1); RefreshLabels(); },
+                () => { CoopConfig.CycleScalePreset(1); RefreshLabels(); });
+
+            _valStickerVol = AddStepperRow(contentRt, "modcfg.sticker_vol",
+                () => { CoopConfig.StickerAudioVolume.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerAudioVolume.Value - 0.15f, 2), 0f, 1f); RefreshLabels(); },
+                () => { CoopConfig.StickerAudioVolume.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerAudioVolume.Value + 0.15f, 2), 0f, 1f); RefreshLabels(); });
+
+            _valMuteStickers = AddToggleRow(contentRt, "modcfg.mute_stickers", () =>
+            {
+                CoopConfig.MuteTeammateStickers.Value = !CoopConfig.MuteTeammateStickers.Value;
+                RefreshLabels();
+            });
+
+            _valReadySound = AddToggleRow(contentRt, "modcfg.ready_sound", () =>
+            {
+                CoopConfig.ReadyCheckSoundCue.Value = !CoopConfig.ReadyCheckSoundCue.Value;
+                RefreshLabels();
+            });
+
+            _valAutoPause = AddToggleRow(contentRt, "modcfg.auto_pause", () =>
+            {
+                CoopConfig.AutoPauseOnDisconnect.Value = !CoopConfig.AutoPauseOnDisconnect.Value;
+                RefreshLabels();
+            });
+
+            _valLockCamRadial = AddToggleRow(contentRt, "modcfg.lock_cam_radial", () =>
+            {
+                CoopConfig.LockCameraDuringRadialMenus.Value = !CoopConfig.LockCameraDuringRadialMenus.Value;
+                RefreshLabels();
+            });
+
+            NativeStyleProvider.CreateDivider(contentRt, "Sec3Div");
+
+            AddSectionHeader(contentRt, "modcfg.sec_controls");
 
             AddKeybindRow(contentRt, "modcfg.key_lobby", CoopConfig.ToggleLobbyKey);
             AddKeybindRow(contentRt, "modcfg.key_hud", CoopConfig.ToggleHudKey);
             AddKeybindRow(contentRt, "modcfg.key_emote", CoopConfig.EmoteWheelKey);
             AddKeybindRow(contentRt, "modcfg.key_ping", CoopConfig.PingHotkey);
             AddKeybindRow(contentRt, "modcfg.key_sketch", CoopConfig.SketchModifierKey);
-            AddKeybindRow(contentRt, "modcfg.key_undo", CoopConfig.UndoBuildKey);
 
-            NativeStyleProvider.CreateDivider(contentRt, "MidDiv");
-
-            _valStickerScale = AddStepperRow(contentRt, "modcfg.sticker_scale",
-                () => { CoopConfig.StickerScale.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerScale.Value - 0.1f, 1), 0.6f, 1.6f); RefreshLabels(); },
-                () => { CoopConfig.StickerScale.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerScale.Value + 0.1f, 1), 0.6f, 1.6f); RefreshLabels(); });
-
-            _valStickerVol = AddStepperRow(contentRt, "modcfg.sticker_vol",
-                () => { CoopConfig.StickerAudioVolume.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerAudioVolume.Value - 0.15f, 2), 0f, 1f); RefreshLabels(); },
-                () => { CoopConfig.StickerAudioVolume.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerAudioVolume.Value + 0.15f, 2), 0f, 1f); RefreshLabels(); });
-
-            _valMuteStickers = AddToggleRow(contentRt, "modcfg.mute_stickers",
-                () => { CoopConfig.MuteTeammateStickers.Value = !CoopConfig.MuteTeammateStickers.Value; RefreshLabels(); });
-
-            _valCompactHud = AddToggleRow(contentRt, "modcfg.compact_hud",
-                () => { CoopConfig.CompactHudMode.Value = !CoopConfig.CompactHudMode.Value; RefreshLabels(); });
-
-            _valAutoPause = AddToggleRow(contentRt, "modcfg.auto_pause",
-                () => { CoopConfig.AutoPauseOnDisconnect.Value = !CoopConfig.AutoPauseOnDisconnect.Value; RefreshLabels(); });
+            var resetRow = CreateRow(contentRt, "ResetKeysRow", 32f);
+            var resetSpacer = new GameObject("Spacer");
+            resetSpacer.transform.SetParent(resetRow.transform, false);
+            resetSpacer.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            var resetBtn = NativeStyleProvider.CreateButton(resetRow.transform, CoopLoc.T("modcfg.reset_keybinds"), NativeStyleProvider.ButtonSecondary, () =>
+            {
+                CoopConfig.ResetKeybindsToDefault();
+                _rebindingTarget = null;
+                NativeStyleProvider.PlayUiSelectSound(1.1f);
+                RefreshLabels();
+            }, 12f, 28f);
+            resetBtn.GetComponent<LayoutElement>().preferredWidth = 196f;
+            _resetKeysBtnText = resetBtn.GetComponentInChildren<TMP_Text>();
 
             var foot = CreateRow(win.transform, "Footer", 36f);
             _langText = NativeStyleProvider.CreateLabel(foot.transform, "", 12f, NativeStyleProvider.TextMuted, TextAlignmentOptions.MidlineLeft);
@@ -208,53 +309,52 @@ namespace EmberwardCoop.UI
             _root.SetActive(false);
         }
 
-        private void AddColorPickerRow(Transform parent)
+        private void AddSectionHeader(Transform parent, string locKey)
         {
-            var row = CreateRow(parent, "PlayerColorRow", 34f);
+            var lbl = NativeStyleProvider.CreateLabel(parent, CoopLoc.T(locKey), 11.5f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true);
+            var le = lbl.gameObject.AddComponent<LayoutElement>();
+            le.minHeight = 20f;
+            le.preferredHeight = 20f;
+            _staticLabels.Add((locKey, lbl));
+        }
+
+        private void AddColorStepperRow(Transform parent)
+        {
+            var row = CreateRow(parent, "PlayerColorRow", 32f);
             _colorRowLabel = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T("modcfg.player_color"), 13f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
             _colorRowLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
-            var swatchesWrap = new GameObject("Swatches");
-            swatchesWrap.transform.SetParent(row.transform, false);
-            var hlg = swatchesWrap.AddComponent<HorizontalLayoutGroup>();
-            hlg.spacing = 6f;
-            hlg.childAlignment = TextAnchor.MiddleRight;
-            hlg.childControlWidth = true;
-            hlg.childControlHeight = true;
-            hlg.childForceExpandWidth = false;
+            var prevBtn = NativeStyleProvider.CreateButton(row.transform, "<", NativeStyleProvider.ButtonSecondary, () => CyclePlayerColor(-1), 13.5f, 28f);
+            prevBtn.GetComponent<LayoutElement>().preferredWidth = 30f;
 
-            for (int i = 0; i < CoopConfig.PlayerPalette.Length; i++)
+            _valPlayerColor = NativeStyleProvider.CreateLabel(row.transform, "", 13f, NativeStyleProvider.EmberGold, TextAlignmentOptions.Center, FontStyles.Bold, autoSize: true, minFontSize: 10f, addShadow: true);
+            _valPlayerColor.gameObject.AddComponent<LayoutElement>().preferredWidth = 104f;
+
+            var nextBtn = NativeStyleProvider.CreateButton(row.transform, ">", NativeStyleProvider.ButtonSecondary, () => CyclePlayerColor(1), 13.5f, 28f);
+            nextBtn.GetComponent<LayoutElement>().preferredWidth = 30f;
+        }
+
+        private void CyclePlayerColor(int delta)
+        {
+            var session = Sync.SessionController.Instance;
+            if (session != null)
             {
-                int colorIdx = i;
-                Color c = CoopConfig.PlayerPalette[i];
-                var btn = NativeStyleProvider.CreateButton(swatchesWrap.transform, "", c, () =>
-                {
-                    var session = Sync.SessionController.Instance;
-                    if (session != null) session.Net.SetLocalColor(colorIdx);
-                    else if (CoopConfig.PreferredColorIndex != null) CoopConfig.PreferredColorIndex.Value = colorIdx;
-                    NativeStyleProvider.PlayUiSelectSound(1.12f);
-                    RefreshLabels();
-                }, 13f, 26f);
-                var ble = btn.GetComponent<LayoutElement>();
-                ble.minWidth = 28f;
-                ble.preferredWidth = 28f;
-
-                var bg = btn.GetComponent<Image>();
-                bg.color = c;
-                var txt = btn.GetComponentInChildren<TMP_Text>();
-                if (txt != null)
-                {
-                    txt.color = new Color(0.10f, 0.08f, 0.06f, 1f);
-                    txt.text = "";
-                }
-                _colorSwatches.Add((bg, txt));
+                session.Net.CycleLocalColor(delta);
             }
+            else if (CoopConfig.PreferredColorIndex != null)
+            {
+                int count = CoopConfig.PlayerPalette.Length;
+                int cur = Math.Clamp(CoopConfig.PreferredColorIndex.Value, 0, count - 1);
+                CoopConfig.PreferredColorIndex.Value = ((cur + (delta >= 0 ? 1 : -1)) % count + count) % count;
+            }
+            NativeStyleProvider.PlayUiSelectSound(1.12f);
+            RefreshLabels();
         }
 
         private void AddKeybindRow(Transform parent, string locKey, ConfigEntry<KeyCode> entry)
         {
-            var row = CreateRow(parent, locKey, 32f);
-            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 13f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
+            var row = CreateRow(parent, locKey, 30f);
+            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 12.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
             lbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             _staticLabels.Add((locKey, lbl));
 
@@ -263,41 +363,41 @@ namespace EmberwardCoop.UI
             {
                 _rebindingTarget = entry;
                 if (btnTxt != null) btnTxt.text = CoopLoc.T("modcfg.press_any_key");
-            }, 12.5f, 28f);
-            btn.GetComponent<LayoutElement>().preferredWidth = 160f;
+            }, 12f, 26f);
+            btn.GetComponent<LayoutElement>().preferredWidth = 164f;
             btnTxt = btn.GetComponentInChildren<TMP_Text>();
             _keybindButtons.Add((entry, btnTxt));
         }
 
         private TMP_Text AddStepperRow(Transform parent, string locKey, Action onMinus, Action onPlus)
         {
-            var row = CreateRow(parent, locKey, 32f);
-            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 13f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
+            var row = CreateRow(parent, locKey, 30f);
+            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 12.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
             lbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             _staticLabels.Add((locKey, lbl));
 
-            var minus = NativeStyleProvider.CreateButton(row.transform, "-", NativeStyleProvider.ButtonSecondary, onMinus, 14f, 28f);
+            var minus = NativeStyleProvider.CreateButton(row.transform, "<", NativeStyleProvider.ButtonSecondary, onMinus, 13.5f, 26f);
             minus.GetComponent<LayoutElement>().preferredWidth = 30f;
 
-            var val = NativeStyleProvider.CreateLabel(row.transform, "", 13f, NativeStyleProvider.EmberGold, TextAlignmentOptions.Center, FontStyles.Bold);
-            val.gameObject.AddComponent<LayoutElement>().preferredWidth = 88f;
+            var val = NativeStyleProvider.CreateLabel(row.transform, "", 12.5f, NativeStyleProvider.EmberGold, TextAlignmentOptions.Center, FontStyles.Bold, autoSize: true, minFontSize: 10f);
+            val.gameObject.AddComponent<LayoutElement>().preferredWidth = 104f;
 
-            var plus = NativeStyleProvider.CreateButton(row.transform, "+", NativeStyleProvider.ButtonSecondary, onPlus, 14f, 28f);
+            var plus = NativeStyleProvider.CreateButton(row.transform, ">", NativeStyleProvider.ButtonSecondary, onPlus, 13.5f, 26f);
             plus.GetComponent<LayoutElement>().preferredWidth = 30f;
             return val;
         }
 
         private (TMP_Text txt, Image chk) AddToggleRow(Transform parent, string locKey, Action onToggle)
         {
-            var row = CreateRow(parent, locKey, 32f);
-            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 13f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
+            var row = CreateRow(parent, locKey, 30f);
+            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 12.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
             lbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             _staticLabels.Add((locKey, lbl));
 
             var chk = NativeStyleProvider.CreateCheckboxIndicator(row.transform, false, 18f);
 
-            var btn = NativeStyleProvider.CreateButton(row.transform, "", NativeStyleProvider.ButtonSecondary, onToggle, 12.5f, 28f);
-            btn.GetComponent<LayoutElement>().preferredWidth = 134f;
+            var btn = NativeStyleProvider.CreateButton(row.transform, "", NativeStyleProvider.ButtonSecondary, onToggle, 12f, 26f);
+            btn.GetComponent<LayoutElement>().preferredWidth = 136f;
             return (btn.GetComponentInChildren<TMP_Text>(), chk);
         }
 
@@ -306,7 +406,8 @@ namespace EmberwardCoop.UI
             if (_root == null) return;
             if (_titleText != null) _titleText.text = CoopLoc.T("modcfg.title");
             if (_closeBtnText != null) _closeBtnText.text = CoopLoc.T("modcfg.close");
-            if (_langText != null) _langText.text = CoopLoc.F("modcfg.language", CoopLoc.ActiveLangCode);
+            if (_resetKeysBtnText != null) _resetKeysBtnText.text = CoopLoc.T("modcfg.reset_keybinds");
+            if (_langText != null) _langText.text = $"v{CoopPlugin.PluginVersion}  ·  {CoopLoc.F("modcfg.language", CoopLoc.ActiveLangCode)}";
 
             for (int i = 0; i < _staticLabels.Count; i++)
                 if (_staticLabels[i].label != null) _staticLabels[i].label.text = CoopLoc.T(_staticLabels[i].locKey);
@@ -318,11 +419,40 @@ namespace EmberwardCoop.UI
                 txt.text = _rebindingTarget == entry ? CoopLoc.T("modcfg.press_any_key") : entry.Value.ToString();
             }
 
-            if (_valStickerScale != null) _valStickerScale.text = $"{CoopConfig.StickerScale.Value:0.0}x";
+            if (_valStickerScale != null)
+            {
+                string scaleKey = (CoopConfig.PingStickerScalePreset?.Value ?? VisualScalePreset.Normal) switch
+                {
+                    VisualScalePreset.Small => "modcfg.scale_small",
+                    VisualScalePreset.Large => "modcfg.scale_large",
+                    _ => "modcfg.scale_normal"
+                };
+                _valStickerScale.text = CoopLoc.T(scaleKey);
+            }
+
+            if (_valOwnershipMode != null)
+            {
+                string ownKey = (CoopConfig.OwnershipIndicatorMode?.Value ?? OwnershipDisplayMode.Always) switch
+                {
+                    OwnershipDisplayMode.HoverOnly => "modcfg.own_hover",
+                    OwnershipDisplayMode.Off => "modcfg.own_off",
+                    _ => "modcfg.own_always"
+                };
+                _valOwnershipMode.text = CoopLoc.T(ownKey);
+            }
+
             if (_valStickerVol != null) _valStickerVol.text = $"{Mathf.RoundToInt(CoopConfig.StickerAudioVolume.Value * 100)}%";
-            UpdateToggleVisual(_valMuteStickers, CoopConfig.MuteTeammateStickers.Value);
+
+            UpdateToggleVisual(_valUnlockAllCoop, CoopConfig.UnlockAllMapsModes.Value);
+            UpdateToggleVisual(_valHideCodeDefault, CoopConfig.HideLobbyCodeByDefault.Value);
             UpdateToggleVisual(_valCompactHud, CoopConfig.CompactHudMode.Value);
+            UpdateToggleVisual(_valAutoCollapseHud, CoopConfig.AutoCollapseHudDuringCombat.Value);
+            UpdateToggleVisual(_valShowCursors, CoopConfig.ShowTeammateCursors.Value);
+            UpdateToggleVisual(_valShowGhosts, CoopConfig.EnableGhostPreviews.Value);
+            UpdateToggleVisual(_valMuteStickers, CoopConfig.MuteTeammateStickers.Value);
+            UpdateToggleVisual(_valReadySound, CoopConfig.ReadyCheckSoundCue.Value);
             UpdateToggleVisual(_valAutoPause, CoopConfig.AutoPauseOnDisconnect.Value);
+            UpdateToggleVisual(_valLockCamRadial, CoopConfig.LockCameraDuringRadialMenus.Value);
 
             var session = Sync.SessionController.Instance;
             bool isHost = session != null && session.Net.IsHost;
@@ -333,14 +463,10 @@ namespace EmberwardCoop.UI
                 ? session.Net.LocalColorIndex
                 : Math.Clamp(CoopConfig.PreferredColorIndex?.Value ?? 0, 0, CoopConfig.PlayerPalette.Length - 1);
 
-            for (int i = 0; i < _colorSwatches.Count; i++)
+            if (_valPlayerColor != null)
             {
-                var (bg, chk) = _colorSwatches[i];
-                bool selected = i == activeColor;
-                if (bg != null)
-                    bg.color = selected ? CoopConfig.PlayerPalette[i] : Color.Lerp(CoopConfig.PlayerPalette[i], new Color(0.28f, 0.24f, 0.20f, 1f), 0.28f);
-                if (chk != null)
-                    chk.text = selected ? "✓" : "";
+                _valPlayerColor.text = CoopLoc.T(CoopConfig.GetPlayerColorNameKey(activeColor));
+                _valPlayerColor.color = CoopConfig.GetPlayerColor(activeColor);
             }
         }
 

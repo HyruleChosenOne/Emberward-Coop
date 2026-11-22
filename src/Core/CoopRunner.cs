@@ -46,7 +46,6 @@ namespace EmberwardCoop.Core
             bool inTitle = GameRefs.IsInTitle;
             bool inActiveRun = GameRefs.IsInMap || GameRefs.IsInBattle;
 
-            // Close the pre-run lobby on any transition out of CoinPage.
             if (!inTitle && (_lobbyPanel?.IsOpen ?? false))
             {
                 _lobbyPanel.ForceCloseForRun();
@@ -74,8 +73,7 @@ namespace EmberwardCoop.Core
             CoopInputGuard.IsCoopModalOpen =
                 (_lobbyPanel?.IsOpen ?? false) ||
                 (_settingsModal?.IsOpen ?? false) ||
-                (_disconnectModal?.IsOpen ?? false) ||
-                (_voteDraftOverlay?.IsBlockingModalOpen ?? false);
+                (_disconnectModal?.IsOpen ?? false);
 
             if (inTitle)
             {
@@ -94,14 +92,10 @@ namespace EmberwardCoop.Core
         {
             if (!hasFocus && _session != null)
             {
-                // Guarantee zero stuck-input or camera-lock states when window loses focus
                 _session.Emotes.CloseWheel(absorbRelease: false);
                 _session.Feedback.CancelAndCloseWheel(absorbRelease: false);
                 _session.Sketch.CancelLocalDrag();
-                CoopInputGuard.IsEmoteWheelOpen = false;
-                CoopInputGuard.IsPingWheelOpen = false;
-                CoopInputGuard.IsPingKeyHolding = false;
-                CoopInputGuard.IsMazeSketching = false;
+                CoopInputGuard.ClearTransientLocks();
             }
         }
 

@@ -17,7 +17,6 @@ namespace EmberwardCoop.Networking
         CmdSetColor = 8,
         ChatMessage = 9,
         CmdSetAvatar = 10,
-        CmdSetLoadout = 11,
         CmdSyncUnlockSummary = 12,
 
         RunSnapshot = 20,
@@ -65,7 +64,6 @@ namespace EmberwardCoop.Networking
 
         CmdVoteMapNode = 120,
         EvtMapNodeVotes = 121,
-        CmdSelectMapNode = 122,
         EvtModalState = 123,
         EvtMapNodeResolved = 124,
         EvtModalClosed = 125,
@@ -77,6 +75,9 @@ namespace EmberwardCoop.Networking
         EvtSharedDraftClosed = 131,
         CmdDraftBarrierState = 132,
         EvtDraftBarrierState = 133,
+        EvtHomeHeroPreview = 134,
+        EvtHomeHeroSelected = 135,
+        EvtSharedVanillaDraftSync = 136,
 
         EvtQuestSnapshot = 150,
         EvtQuestProgress = 151,
@@ -87,7 +88,6 @@ namespace EmberwardCoop.Networking
         CursorAndGhostState = 170,
         MapPing = 171,
 
-        SessionSettingsSync = 190,
         CmdGiftGold = 191,
         EvtGiftGold = 192,
         PlayerPeekUpdate = 193,
@@ -99,9 +99,7 @@ namespace EmberwardCoop.Networking
 
         StickerEmote = 216,
         QuickCallout = 217,
-        MazeSketchTrail = 218,
-        CmdUndoBuild = 219,
-        EvtUndoBuild = 220
+        MazeSketchTrail = 218
     }
 
     // Wire format (10-byte header): [2B magic 'EW'][1B version][2B type][1B delivery][4B length][payload]
@@ -175,5 +173,13 @@ namespace EmberwardCoop.Networking
 
         public static void WriteSafeString(this BinaryWriter w, string s)
             => w.Write(s ?? "");
+
+        public static int ReadBoundedCount(this BinaryReader r, int maxCount)
+        {
+            int count = r.ReadInt32();
+            if (count < 0 || count > maxCount)
+                throw new InvalidDataException($"Packet element count {count} out of bounds (0..{maxCount}).");
+            return count;
+        }
     }
 }

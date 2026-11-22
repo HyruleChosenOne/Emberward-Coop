@@ -252,11 +252,11 @@ namespace EmberwardCoop.Sync
             int mapStep = r.ReadInt32();
             var characterType = (eCharacterType)r.ReadInt32();
 
-            int tCount = r.ReadInt32();
+            int tCount = r.ReadBoundedCount(256);
             var towerTypes = new eItemType[tCount];
             for (int i = 0; i < tCount; i++) towerTypes[i] = (eItemType)r.ReadInt32();
 
-            int rCount = r.ReadInt32();
+            int rCount = r.ReadBoundedCount(256);
             var relicTypes = new eItemType[rCount];
             for (int i = 0; i < rCount; i++) relicTypes[i] = (eItemType)r.ReadInt32();
 

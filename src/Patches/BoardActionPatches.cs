@@ -65,7 +65,6 @@ namespace EmberwardCoop.Patches
                         }
                     }
 
-                    S.Undo.RecordLocalTowerPlacement(finalPos, cost, fromHand, __instance.currentPlacementCardData);
                     S.Board.ClientSendPlaceTower(tower.SettingData.itemType, finalPos, finalEuler, fromHand, rId);
 
                     if (!(!fromHand && doContinuousBuild && __instance.canBuildContinuously))
@@ -78,11 +77,6 @@ namespace EmberwardCoop.Patches
 
                 if (tetrisCheck != null)
                 {
-                    var cInfo = GameSerializers.CaptureCard(__instance.currentPlacementCardData);
-                    cInfo.ItemType = (int)tetrisCheck.itemType;
-                    cInfo.IsTetris = true;
-                    S.Undo.RecordLocalBlockPlacement(finalPos, cInfo);
-
                     if (S.Ruleset.ClientSpendsOwnResourcesOnBuild && ig != null && __instance.currentPlacementCardData != null)
                     {
                         using (NetworkScope.Enter()) ig.OnRequestRemoveCardFromHand(__instance.currentPlacementCardData);
@@ -100,9 +94,6 @@ namespace EmberwardCoop.Patches
                 var tower = __instance.curPlacementPrefab.GetComponent<ABaseTower>();
                 if (tower?.SettingData != null)
                 {
-                    bool fromHand = __instance.currentPlacementCardData != null;
-                    int cost = fromHand ? 0 : (TowerManager.Instance != null ? TowerManager.Instance.GetBuildCost(tower.SettingData.itemType) : 0);
-                    S.Undo.RecordLocalTowerPlacement(finalPos, cost, fromHand, __instance.currentPlacementCardData);
                     S.Board.BroadcastEvtPlaceTower(0, tower.SettingData.itemType, finalPos, finalEuler);
                     S.Economy.MarkDirty();
                 }
@@ -111,7 +102,6 @@ namespace EmberwardCoop.Patches
                     var cInfo = GameSerializers.CaptureCard(__instance.currentPlacementCardData);
                     cInfo.ItemType = (int)tetrisCheck.itemType;
                     cInfo.IsTetris = true;
-                    S.Undo.RecordLocalBlockPlacement(finalPos, cInfo);
                     S.Balance.IncrementTurnBlockCount();
                     S.Board.BroadcastEvtPlaceTetris(0, tetrisCheck.itemType, finalPos, finalEuler, cInfo);
                     S.Economy.MarkDirty();
@@ -193,10 +183,20 @@ namespace EmberwardCoop.Patches
             }
             if (S.Net.IsHost)
             {
+                int ownerId = S.Ownership.GetBlockOwner(__instance);
                 S.Ownership.UnregisterBlock(__instance);
                 S.Balance.DecrementTurnBlockCount();
                 S.Board.BroadcastEvtRecallTetris(0, pos, isForceRecall);
                 S.Economy.MarkDirty();
+
+                // In Separate Resources mode, deleting a disconnected client's block removes it cleanly from the grid
+                // without adding a duplicate block card into the Host's hand.
+                if (S.Ruleset.EnforcesEntityOwnership && ownerId != 0 && !S.Ownership.IsOwnerConnected(ownerId))
+                {
+                    using (NetworkScope.Enter())
+                        __instance.Remove();
+                    return false;
+                }
             }
             return true;
         }

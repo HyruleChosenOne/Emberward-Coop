@@ -83,7 +83,7 @@ namespace EmberwardCoop.Networking
         private volatile SessionRole _role = SessionRole.Offline;
         private volatile bool _running;
         private int _connectAttemptSeq;
-        private int _nextPeerId = 1;
+        private int _nextPeerId;
 
         private TcpListener _tcpListener;
         private UdpClient _udpDataSocket;
@@ -93,6 +93,7 @@ namespace EmberwardCoop.Networking
 
         private UdpClient _discoveryListener;
         private UdpClient _discoveryBroadcaster;
+        private readonly object _broadcasterLock = new object();
         private volatile bool _discoveryActive;
 
         private readonly ConcurrentQueue<IncomingPacket> _incoming = new ConcurrentQueue<IncomingPacket>();
@@ -135,6 +136,7 @@ namespace EmberwardCoop.Networking
             Shutdown();
             try
             {
+                Interlocked.Exchange(ref _nextPeerId, 0);
                 ListenPort = port;
                 _hostName = string.IsNullOrWhiteSpace(hostName) ? "Host" : hostName.Trim();
                 _advertisedMaxPlayers = Math.Clamp(maxPlayers, 2, 6);
@@ -452,8 +454,11 @@ namespace EmberwardCoop.Networking
             _udpDataSocket = null;
             _hostUdpEndPoint = null;
 
-            try { _discoveryBroadcaster?.Close(); } catch { }
-            _discoveryBroadcaster = null;
+            lock (_broadcasterLock)
+            {
+                try { _discoveryBroadcaster?.Close(); } catch { }
+                _discoveryBroadcaster = null;
+            }
 
             lock (_peers)
             {
@@ -791,17 +796,17 @@ namespace EmberwardCoop.Networking
             string payload = DiscoveryHeader + JsonSerializer.Serialize(beacon);
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                try
+                lock (_broadcasterLock)
                 {
-                    if (_role != SessionRole.Host) return;
-                    if (_discoveryBroadcaster == null)
+                    try
                     {
-                        _discoveryBroadcaster = new UdpClient { EnableBroadcast = true };
+                        if (_role != SessionRole.Host) return;
+                        _discoveryBroadcaster ??= new UdpClient { EnableBroadcast = true };
+                        byte[] bytes = Encoding.UTF8.GetBytes(payload);
+                        _discoveryBroadcaster.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, DiscoveryPort));
                     }
-                    byte[] bytes = Encoding.UTF8.GetBytes(payload);
-                    _discoveryBroadcaster.Send(bytes, bytes.Length, new IPEndPoint(IPAddress.Broadcast, DiscoveryPort));
+                    catch { }
                 }
-                catch { }
             });
         }
 

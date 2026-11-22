@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using EmberwardCoop.Core;
 using UnityEngine;
 
 namespace EmberwardCoop.Rules
@@ -70,11 +71,7 @@ namespace EmberwardCoop.Rules
         public int GiftPerWaveCap = 0; // 0 = unlimited
         public DraftSyncMode DraftMode = DraftSyncMode.SimultaneousIndependent;
         public SpeedControlRule SpeedControl = SpeedControlRule.AnyPlayer;
-        public bool SharedLoadoutsInSharedMode = true;
         public bool UnlockAllMapsModes = false;
-
-        public bool UsesIndividualLoadouts =>
-            EconomyMode == CoopEconomyMode.SeparateResources || !SharedLoadoutsInSharedMode;
 
         public void ApplyPreset(SessionPreset preset, int playerCount)
         {
@@ -134,13 +131,11 @@ namespace EmberwardCoop.Rules
 
                 case SessionPreset.BalancedCoop:
                 default:
-                    // Balanced Co-op: ~1.25x combined team gold in 2P, scaled HP/boss pressure, negotiated maze turns
                     EnemyHpMultiplier = Mathf.Clamp(1.00f + extra * 0.35f, 1.0f, 2.5f);
                     WaveDensityMultiplier = Mathf.Clamp(1.00f + extra * 0.15f, 1.0f, 2.0f);
                     EnemySpeedMultiplier = 1.00f;
                     BossHpArmorMultiplier = Mathf.Clamp(1.15f + extra * 0.40f, 1.0f, 3.0f);
                     StartingGold = StartingGoldRule.BalancedSplit;
-                    // Target combined team economy ~1.25x solo: 2P -> 0.63x each, 3P -> 0.50x each
                     WaveIncomeMultiplier = Mathf.Clamp((float)Math.Round(1.26f / Math.Max(1, p), 2), 0.50f, 1.00f);
                     BlockPacing = BlockPacingRule.SharedTurnBlockCap;
                     SharedTurnBlockCap = Math.Clamp(2 + extra, 2, 6);
@@ -157,6 +152,12 @@ namespace EmberwardCoop.Rules
         {
             if (AutoScaleByPlayerCount && Preset != SessionPreset.Custom)
                 ApplyPreset(Preset, Math.Max(2, playerCount));
+        }
+
+        public void SyncUnlockAllFromModConfig()
+        {
+            if (CoopConfig.UnlockAllMapsModes != null)
+                UnlockAllMapsModes = CoopConfig.UnlockAllMapsModes.Value;
         }
 
         public void Write(BinaryWriter w)
@@ -177,7 +178,6 @@ namespace EmberwardCoop.Rules
             w.Write(GiftPerWaveCap);
             w.Write((byte)DraftMode);
             w.Write((byte)SpeedControl);
-            w.Write(SharedLoadoutsInSharedMode);
             w.Write(UnlockAllMapsModes);
         }
 
@@ -199,7 +199,6 @@ namespace EmberwardCoop.Rules
             GiftPerWaveCap = Math.Max(0, r.ReadInt32());
             DraftMode = (DraftSyncMode)r.ReadByte();
             SpeedControl = (SpeedControlRule)r.ReadByte();
-            SharedLoadoutsInSharedMode = r.BaseStream.Position < r.BaseStream.Length ? r.ReadBoolean() : true;
             UnlockAllMapsModes = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
         }
 

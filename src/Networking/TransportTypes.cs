@@ -72,7 +72,6 @@ namespace EmberwardCoop.Networking
         public bool IsDraftingBusy;
         public string ActiveModal = "";
         public ulong SteamId;
-        public PlayerLoadoutChoice Loadout = new PlayerLoadoutChoice();
         public PlayerUnlockSummary Unlocks = new PlayerUnlockSummary();
         public bool IsHost => PlayerId == 0;
     }

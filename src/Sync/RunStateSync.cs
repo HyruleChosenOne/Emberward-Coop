@@ -24,10 +24,13 @@ namespace EmberwardCoop.Sync
         public string ActiveCoopSaveId = "";
         public byte[] PendingRestoreBoardBytes;
         public int PendingRestoreCoin = -1;
-        public bool HasHydratedLocalStartLoadout;
 
         // Host caches per-peer saved inventories for co-op savefiles
         public readonly Dictionary<int, SavedPlayerStateDto> PeerSavedInventories = new Dictionary<int, SavedPlayerStateDto>();
+
+        // Client caches per-player deterministic map node rewards in Separate Resources mode
+        private int _cachedSeparateRewardMapSeed;
+        private readonly Dictionary<int, StageRewardData> _separateNodeRewards = new Dictionary<int, StageRewardData>();
 
         public bool MenuLockDirty = true;
         private bool _runDirty;
@@ -60,8 +63,9 @@ namespace EmberwardCoop.Sync
             ActiveCoopSaveId = "";
             PendingRestoreBoardBytes = null;
             PendingRestoreCoin = -1;
-            HasHydratedLocalStartLoadout = false;
             PeerSavedInventories.Clear();
+            _cachedSeparateRewardMapSeed = 0;
+            _separateNodeRewards.Clear();
             MenuLockDirty = true;
             _runDirty = false;
             _lastRunHash = 0;
@@ -326,130 +330,130 @@ namespace EmberwardCoop.Sync
                 envScene = MainGame.Instance.sceneEntry.name ?? "";
             else if (id?.mapNodeData != null && !string.IsNullOrEmpty(id.mapNodeData.stageEnvSceneName))
                 envScene = id.mapNodeData.stageEnvSceneName;
+            else if (id != null && !string.IsNullOrEmpty(id.stageName))
+                envScene = id.stageName;
 
+            w.WriteSafeString(HostTargetScene ?? "CoinPage");
+            w.Write(HostSceneLoadSeq);
+            w.Write(HostSelectedMapNodeIndex);
+            w.WriteSafeString(envScene);
+
+            w.Write(gd != null ? gd.randomSeed : 12345);
+            w.Write(gd != null && gd.isInitialized);
+            w.Write(gd != null && gd.isGameStarted);
+            w.Write(gd != null && gd.isGameEnded);
+            w.Write(gd != null && gd.isCustomGame);
+            w.Write(gd != null ? (int)gd.difficulty : 0);
+            w.Write(gd != null ? (int)gd.gameMode : 0);
+            w.Write(gd != null ? (int)gd.characterType : 0);
+            w.Write(gd != null ? (int)gd.emberType : 0);
+            w.Write(gd != null ? (int)gd.curWorld : 0);
+            w.Write(gd != null ? gd.curMapStep : 0);
+            w.Write(gd != null ? gd.curMapNodeIndex : 0);
+            w.Write(gd != null ? gd.gem : 0);
+            w.Write(gd != null ? gd.rerollChance : 0);
+            w.Write(gd != null ? gd.reviveItem : 0);
+            w.Write(gd != null ? gd.towerCardLimit : 5);
+            w.Write(gd != null ? gd.itemCardLimit : 5);
+            w.Write(gd != null ? gd.drawCardPerRound : 2);
+            w.Write(gd != null ? gd.maxHP : 20);
+            w.Write(gd != null ? gd.curHP : 20);
+            w.Write(gd != null ? gd.extraShield : 0);
+            w.Write(gd != null ? gd.demonFlameLevel : 0);
+            w.Write(gd != null ? gd.goldRemainLastLevel : 0);
+            w.Write(gd != null && gd.isStartedAfterBossEndlessMode);
+            w.Write(gd != null ? gd.levelClearedInAfterBossEndlessMode : 0);
+            w.Write(gd != null && gd.turnOffTimer);
+
+            var relics = gd?.list_CollectedRelic;
+            int rCount = relics?.Count ?? 0;
+            w.Write(rCount);
+            for (int i = 0; i < rCount; i++) w.Write((int)relics[i]);
+
+            var disRelics = gd?.list_PlayerDisabledRelic;
+            int drCount = disRelics?.Count ?? 0;
+            w.Write(drCount);
+            for (int i = 0; i < drCount; i++) w.Write((int)disRelics[i]);
+
+            var loadout = gd?.list_LoadoutTowerData;
+            int lCount = loadout?.Count ?? 0;
+            w.Write(lCount);
+            for (int i = 0; i < lCount; i++)
             {
-                w.WriteSafeString(HostTargetScene ?? "CoinPage");
-                w.Write(HostSceneLoadSeq);
-                w.Write(HostSelectedMapNodeIndex);
-                w.WriteSafeString(envScene);
-
-                w.Write(gd != null ? gd.randomSeed : 12345);
-                w.Write(gd != null && gd.isInitialized);
-                w.Write(gd != null && gd.isGameStarted);
-                w.Write(gd != null && gd.isGameEnded);
-                w.Write(gd != null && gd.isCustomGame);
-                w.Write(gd != null ? (int)gd.difficulty : 0);
-                w.Write(gd != null ? (int)gd.gameMode : 0);
-                w.Write(gd != null ? (int)gd.characterType : 0);
-                w.Write(gd != null ? (int)gd.emberType : 0);
-                w.Write(gd != null ? (int)gd.curWorld : 0);
-                w.Write(gd != null ? gd.curMapStep : 0);
-                w.Write(gd != null ? gd.curMapNodeIndex : 0);
-                w.Write(gd != null ? gd.gem : 0);
-                w.Write(gd != null ? gd.rerollChance : 0);
-                w.Write(gd != null ? gd.reviveItem : 0);
-                w.Write(gd != null ? gd.towerCardLimit : 5);
-                w.Write(gd != null ? gd.itemCardLimit : 5);
-                w.Write(gd != null ? gd.drawCardPerRound : 2);
-                w.Write(gd != null ? gd.maxHP : 20);
-                w.Write(gd != null ? gd.curHP : 20);
-                w.Write(gd != null ? gd.extraShield : 0);
-                w.Write(gd != null ? gd.demonFlameLevel : 0);
-                w.Write(gd != null ? gd.goldRemainLastLevel : 0);
-                w.Write(gd != null && gd.isStartedAfterBossEndlessMode);
-                w.Write(gd != null ? gd.levelClearedInAfterBossEndlessMode : 0);
-                w.Write(gd != null && gd.turnOffTimer);
-
-                var relics = gd?.list_CollectedRelic;
-                int rCount = relics?.Count ?? 0;
-                w.Write(rCount);
-                for (int i = 0; i < rCount; i++) w.Write((int)relics[i]);
-
-                var disRelics = gd?.list_PlayerDisabledRelic;
-                int drCount = disRelics?.Count ?? 0;
-                w.Write(drCount);
-                for (int i = 0; i < drCount; i++) w.Write((int)disRelics[i]);
-
-                var loadout = gd?.list_LoadoutTowerData;
-                int lCount = loadout?.Count ?? 0;
-                w.Write(lCount);
-                for (int i = 0; i < lCount; i++)
-                {
-                    var t = loadout[i];
-                    w.Write(t != null ? (int)t.ItemType : 0);
-                    w.Write(t != null ? t.Level : 1);
-                }
-
-                var collected = gd?.list_CollectedTowerData;
-                int cCount = collected?.Count ?? 0;
-                w.Write(cCount);
-                for (int i = 0; i < cCount; i++)
-                {
-                    var t = collected[i];
-                    w.Write(t != null ? (int)t.ItemType : 0);
-                    w.Write(t != null ? t.Level : 1);
-                }
-
-                var storage = gd?.list_ItemStorage;
-                int sCount = storage?.Count ?? 0;
-                w.Write(sCount);
-                for (int i = 0; i < sCount; i++)
-                    GameSerializers.CaptureCard(storage[i]).Write(w);
-
-                GameSerializers.WriteQuestData(w, gd?.quest);
-                GameSerializers.WriteAltarPacts(w, gd?.list_AltarPactData);
-                GameSerializers.WriteHardModeSetting(w, gd?.hardModeData);
-                GameSerializers.WriteCharacterExtras(w, gd);
-
-                var mgs = gd?.mapGenerateSetting;
-                if (mgs == null) w.Write(false);
-                else
-                {
-                    w.Write(true);
-                    w.Write((int)mgs.WorldType);
-                    w.Write(mgs.Step);
-                    w.Write(mgs.MinNodeInStep);
-                    w.Write(mgs.MaxNodeInStep);
-                    w.Write(mgs.Weight_Level);
-                    w.Write(mgs.Weight_Level_Corrupted);
-                    w.Write(mgs.Weight_Shop);
-                    w.Write(mgs.Weight_Workshop);
-                    w.Write(mgs.Weight_SpecialEvent);
-                    w.Write(mgs.Weight_Altar);
-                    w.Write(mgs.Weight_Quest);
-                    w.Write(mgs.Weight_Campsite);
-                    w.Write(mgs.Seed);
-                }
-
-                var md = gd?.mapData;
-                if (md == null || !md.IsGenerated || md.list_MapNodeData == null) w.Write(false);
-                else
-                {
-                    w.Write(true);
-                    w.Write(md.randomSeed);
-                    var stepCounts = md.list_NodeCountInEachStep;
-                    int scCount = stepCounts?.Count ?? 0;
-                    w.Write(scCount);
-                    for (int i = 0; i < scCount; i++) w.Write(stepCounts[i]);
-                    var nodes = md.list_MapNodeData;
-                    w.Write(nodes.Count);
-                    for (int i = 0; i < nodes.Count; i++) GameSerializers.WriteMapNode(w, nodes[i]);
-                }
-
-                w.Write(id != null ? (int)id.worldType : 0);
-                w.Write(id != null ? (int)id.missionType : 0);
-                w.Write(id != null ? (int)id.stageType : 0);
-                w.Write(id != null ? (int)id.waveMode : 0);
-                w.Write(id != null ? (int)id.endlessModeType : 0);
-                w.Write(id != null ? id.difficulty : 0);
-                w.Write(id != null && id.isCorrupted);
-                w.Write(id != null && id.isAnomaly);
-                w.Write(id != null && id.isTerritoryLevel);
-                w.WriteSafeString(id?.stageName);
-                w.WriteSafeString(id?.leaderboardName);
-                w.WriteSafeString(id?.endlessModeRoundRewardDataPath);
-                GameSerializers.WriteMapNode(w, id?.mapNodeData);
+                var t = loadout[i];
+                w.Write(t != null ? (int)t.ItemType : 0);
+                w.Write(t != null ? t.Level : 1);
             }
+
+            var collected = gd?.list_CollectedTowerData;
+            int cCount = collected?.Count ?? 0;
+            w.Write(cCount);
+            for (int i = 0; i < cCount; i++)
+            {
+                var t = collected[i];
+                w.Write(t != null ? (int)t.ItemType : 0);
+                w.Write(t != null ? t.Level : 1);
+            }
+
+            var storage = gd?.list_ItemStorage;
+            int sCount = storage?.Count ?? 0;
+            w.Write(sCount);
+            for (int i = 0; i < sCount; i++)
+                GameSerializers.CaptureCard(storage[i]).Write(w);
+
+            GameSerializers.WriteQuestData(w, gd?.quest);
+            GameSerializers.WriteAltarPacts(w, gd?.list_AltarPactData);
+            GameSerializers.WriteHardModeSetting(w, gd?.hardModeData);
+            GameSerializers.WriteCharacterExtras(w, gd);
+
+            var mgs = gd?.mapGenerateSetting;
+            if (mgs == null) w.Write(false);
+            else
+            {
+                w.Write(true);
+                w.Write((int)mgs.WorldType);
+                w.Write(mgs.Step);
+                w.Write(mgs.MinNodeInStep);
+                w.Write(mgs.MaxNodeInStep);
+                w.Write(mgs.Weight_Level);
+                w.Write(mgs.Weight_Level_Corrupted);
+                w.Write(mgs.Weight_Shop);
+                w.Write(mgs.Weight_Workshop);
+                w.Write(mgs.Weight_SpecialEvent);
+                w.Write(mgs.Weight_Altar);
+                w.Write(mgs.Weight_Quest);
+                w.Write(mgs.Weight_Campsite);
+                w.Write(mgs.Seed);
+            }
+
+            var md = gd?.mapData;
+            if (md == null || !md.IsGenerated || md.list_MapNodeData == null) w.Write(false);
+            else
+            {
+                w.Write(true);
+                w.Write(md.randomSeed);
+                var stepCounts = md.list_NodeCountInEachStep;
+                int scCount = stepCounts?.Count ?? 0;
+                w.Write(scCount);
+                for (int i = 0; i < scCount; i++) w.Write(stepCounts[i]);
+                var nodes = md.list_MapNodeData;
+                w.Write(nodes.Count);
+                for (int i = 0; i < nodes.Count; i++) GameSerializers.WriteMapNode(w, nodes[i]);
+            }
+
+            w.Write(id != null ? (int)id.worldType : 0);
+            w.Write(id != null ? (int)id.missionType : 0);
+            w.Write(id != null ? (int)id.stageType : 0);
+            w.Write(id != null ? (int)id.waveMode : 0);
+            w.Write(id != null ? (int)id.endlessModeType : 0);
+            w.Write(id != null ? id.difficulty : 0);
+            w.Write(id != null && id.isCorrupted);
+            w.Write(id != null && id.isAnomaly);
+            w.Write(id != null && id.isTerritoryLevel);
+            w.WriteSafeString(id?.stageName);
+            w.WriteSafeString(id?.leaderboardName);
+            w.WriteSafeString(id?.endlessModeRoundRewardDataPath);
+            GameSerializers.WriteMapNode(w, id?.mapNodeData);
         }
 
         public void HandleRunSnapshot(BinaryReader r)
@@ -489,25 +493,25 @@ namespace EmberwardCoop.Sync
             int endlessCleared = r.ReadInt32();
             bool turnOffTimer = r.ReadBoolean();
 
-            int rCount = r.ReadInt32();
+            int rCount = r.ReadBoundedCount(256);
             var relics = new int[rCount];
             for (int i = 0; i < rCount; i++) relics[i] = r.ReadInt32();
 
-            int drCount = r.ReadInt32();
+            int drCount = r.ReadBoundedCount(256);
             var disRelics = new int[drCount];
             for (int i = 0; i < drCount; i++) disRelics[i] = r.ReadInt32();
 
-            int lCount = r.ReadInt32();
+            int lCount = r.ReadBoundedCount(128);
             var loadoutTypes = new int[lCount];
             var loadoutLevels = new int[lCount];
             for (int i = 0; i < lCount; i++) { loadoutTypes[i] = r.ReadInt32(); loadoutLevels[i] = r.ReadInt32(); }
 
-            int cCount = r.ReadInt32();
+            int cCount = r.ReadBoundedCount(256);
             var collectedTypes = new int[cCount];
             var collectedLevels = new int[cCount];
             for (int i = 0; i < cCount; i++) { collectedTypes[i] = r.ReadInt32(); collectedLevels[i] = r.ReadInt32(); }
 
-            int sCount = r.ReadInt32();
+            int sCount = r.ReadBoundedCount(256);
             var storageCards = new NetCardInfo[sCount];
             for (int i = 0; i < sCount; i++) storageCards[i] = NetCardInfo.Read(r);
 
@@ -565,12 +569,12 @@ namespace EmberwardCoop.Sync
                 if (r.ReadBoolean())
                 {
                     syncedMap = new MapData { IsGenerated = true, randomSeed = r.ReadInt32() };
-                    int scCount = r.ReadInt32();
+                    int scCount = r.ReadBoundedCount(64);
                     syncedMap.list_NodeCountInEachStep ??= new Il2CppSystem.Collections.Generic.List<int>();
                     syncedMap.list_NodeCountInEachStep.Clear();
                     for (int i = 0; i < scCount; i++) syncedMap.list_NodeCountInEachStep.Add(r.ReadInt32());
 
-                    int nCount = r.ReadInt32();
+                    int nCount = r.ReadBoundedCount(512);
                     syncedMap.list_MapNodeData ??= new Il2CppSystem.Collections.Generic.List<MapNodeData>();
                     syncedMap.list_MapNodeData.Clear();
                     for (int i = 0; i < nCount; i++)
@@ -597,14 +601,14 @@ namespace EmberwardCoop.Sync
                 PendingEnvSceneName = envScene;
                 PendingStageSeed = (idMapNode != null && idMapNode.randomSeed != 0) ? idMapNode.randomSeed : randomSeed;
 
+                var s = _session();
+                bool isSeparateMode = (s?.Settings.EconomyMode ?? CoopEconomyMode.SharedResources) == CoopEconomyMode.SeparateResources;
+
                 if (gd != null)
                 {
-                    var s = _session();
-                    bool individualMode = !forceApplyInventory && (s?.Ruleset.UsesIndividualLoadouts ?? false);
-                    bool localHasTowers = gd.list_LoadoutTowerData != null && gd.list_LoadoutTowerData.Count > 0;
-                    bool localHasStorage = gd.list_ItemStorage != null && gd.list_ItemStorage.Count > 0;
-                    // Never preserve an empty client inventory; always hydrate when empty.
-                    bool preserveClientInventory = individualMode && localHasTowers && localHasStorage && gd.randomSeed == randomSeed && randomSeed != 0;
+                    // In Separate Resources mode, each player manages their own Academy draft, towers, blocks, relics, gems, and rerolls.
+                    // Never overwrite Client's inventory with Host's inventory unless explicitly loading a saved run (forceApplyInventory).
+                    bool applyHostInventory = forceApplyInventory || !isSeparateMode;
 
                     gd.randomSeed = randomSeed;
                     gd.isInitialized = isInit;
@@ -618,15 +622,10 @@ namespace EmberwardCoop.Sync
                     gd.curWorld = (eWorldType)curWorld;
                     gd.curMapStep = curMapStep;
                     gd.curMapNodeIndex = curMapNodeIndex;
-                    if (!preserveClientInventory)
-                    {
-                        gd.gem = gem;
-                        gd.rerollChance = rerollChance;
-                        gd.reviveItem = reviveItem;
-                        gd.towerCardLimit = towerLimit;
-                        gd.itemCardLimit = itemLimit;
-                        gd.drawCardPerRound = drawPerRound;
-                    }
+                    gd.towerCardLimit = towerLimit;
+                    gd.itemCardLimit = itemLimit;
+                    gd.drawCardPerRound = drawPerRound;
+
                     // Core HP is always a single shared pool across the entire party.
                     gd.maxHP = maxHP;
                     gd.curHP = curHP;
@@ -638,61 +637,59 @@ namespace EmberwardCoop.Sync
                     gd.turnOffTimer = turnOffTimer;
                     gd.quest = syncedQuest;
 
-                    if (!preserveClientInventory)
+                    if (applyHostInventory)
                     {
-                        if (individualMode && !HasHydratedLocalStartLoadout)
-                        {
-                            // Hydrate client's own chosen Pre-Run Loadout instead of copying Host's inventory
-                            HasHydratedLocalStartLoadout = true;
-                            int peerSeed = unchecked(randomSeed ^ (_net.LocalPlayerId * 73856093));
-                            LoadoutCatalog.HydrateGameplayData(gd, (eCharacterType)charType, _net.LocalLoadout, peerSeed, forceOverwriteInventory: true);
-                        }
-                        else
-                        {
-                            if (gd.list_CollectedRelic != null)
-                            {
-                                gd.list_CollectedRelic.Clear();
-                                for (int i = 0; i < rCount; i++) gd.list_CollectedRelic.Add((eItemType)relics[i]);
-                            }
-                            if (gd.list_PlayerDisabledRelic != null)
-                            {
-                                gd.list_PlayerDisabledRelic.Clear();
-                                for (int i = 0; i < drCount; i++) gd.list_PlayerDisabledRelic.Add((eItemType)disRelics[i]);
-                            }
-                            if (gd.list_LoadoutTowerData != null && (lCount > 0 || !individualMode))
-                            {
-                                gd.list_LoadoutTowerData.Clear();
-                                for (int i = 0; i < lCount; i++)
-                                    gd.list_LoadoutTowerData.Add(new TowerIngameData((eItemType)loadoutTypes[i], loadoutLevels[i]));
-                            }
-                            if (gd.list_CollectedTowerData != null && (cCount > 0 || !individualMode))
-                            {
-                                gd.list_CollectedTowerData.Clear();
-                                for (int i = 0; i < cCount; i++)
-                                    gd.list_CollectedTowerData.Add(new TowerIngameData((eItemType)collectedTypes[i], collectedLevels[i]));
-                            }
-                            if (gd.list_ItemStorage != null && (sCount > 0 || !individualMode))
-                            {
-                                gd.list_ItemStorage.Clear();
-                                for (int i = 0; i < sCount; i++)
-                                {
-                                    var cd = GameSerializers.MaterializeCard(storageCards[i]);
-                                    if (cd != null) gd.list_ItemStorage.Add(cd);
-                                }
-                            }
-                        }
+                        gd.gem = gem;
+                        gd.rerollChance = rerollChance;
+                        gd.reviveItem = reviveItem;
 
-                        // Final non-empty fallback if Host snapshot arrived before towers/blocks existed
-                        if ((gd.list_LoadoutTowerData == null || gd.list_LoadoutTowerData.Count == 0) ||
-                            (gd.list_ItemStorage == null || gd.list_ItemStorage.Count == 0))
+                        if (gd.list_CollectedRelic != null)
                         {
-                            var fallbackChoice = individualMode ? _net.LocalLoadout : s?.LobbySetup.HostSharedLoadout;
-                            int peerSeed = unchecked(randomSeed ^ (_net.LocalPlayerId * 73856093));
-                            LoadoutCatalog.HydrateGameplayData(gd, (eCharacterType)charType, fallbackChoice, peerSeed, forceOverwriteInventory: false);
+                            gd.list_CollectedRelic.Clear();
+                            for (int i = 0; i < rCount; i++) gd.list_CollectedRelic.Add((eItemType)relics[i]);
+                        }
+                        if (gd.list_PlayerDisabledRelic != null)
+                        {
+                            gd.list_PlayerDisabledRelic.Clear();
+                            for (int i = 0; i < drCount; i++) gd.list_PlayerDisabledRelic.Add((eItemType)disRelics[i]);
+                        }
+                        if (gd.list_LoadoutTowerData != null)
+                        {
+                            gd.list_LoadoutTowerData.Clear();
+                            for (int i = 0; i < lCount; i++)
+                                gd.list_LoadoutTowerData.Add(new TowerIngameData((eItemType)loadoutTypes[i], loadoutLevels[i]));
+                        }
+                        if (gd.list_CollectedTowerData != null)
+                        {
+                            gd.list_CollectedTowerData.Clear();
+                            for (int i = 0; i < cCount; i++)
+                                gd.list_CollectedTowerData.Add(new TowerIngameData((eItemType)collectedTypes[i], collectedLevels[i]));
+                        }
+                        if (gd.list_ItemStorage != null)
+                        {
+                            gd.list_ItemStorage.Clear();
+                            for (int i = 0; i < sCount; i++)
+                            {
+                                var cd = GameSerializers.MaterializeCard(storageCards[i]);
+                                if (cd != null) gd.list_ItemStorage.Add(cd);
+                            }
                         }
                     }
+
                     if (syncedMgs != null) gd.mapGenerateSetting = syncedMgs;
-                    if (syncedMap != null) gd.mapData = syncedMap;
+                    if (syncedMap != null)
+                    {
+                        if (isSeparateMode && syncedMap.list_MapNodeData != null)
+                        {
+                            for (int i = 0; i < syncedMap.list_MapNodeData.Count; i++)
+                            {
+                                var nd = syncedMap.list_MapNodeData[i];
+                                if (nd != null && _separateNodeRewards.TryGetValue(i, out var myReward) && myReward != null)
+                                    nd.stageReward = myReward;
+                            }
+                        }
+                        gd.mapData = syncedMap;
+                    }
                 }
 
                 var id = gdm?.IntermediateData;
@@ -714,6 +711,8 @@ namespace EmberwardCoop.Sync
                     if (idMapNode != null)
                     {
                         if (!string.IsNullOrEmpty(envScene)) idMapNode.stageEnvSceneName = envScene;
+                        if (isSeparateMode && _separateNodeRewards.TryGetValue(idMapNode.Index, out var cachedNodeReward) && cachedNodeReward != null)
+                            idMapNode.stageReward = cachedNodeReward;
                         id.mapNodeData = idMapNode;
                     }
                     else if (id.mapNodeData != null && !string.IsNullOrEmpty(envScene))
@@ -768,7 +767,6 @@ namespace EmberwardCoop.Sync
             if (gd != null)
             {
                 CoopSaveStorage.ApplySavedInventoryToGameplay(gd, dto);
-                HasHydratedLocalStartLoadout = true;
                 PendingRestoreCoin = dto.Coin;
                 CoopLogger.Info(LogCategory.Sync, $"Restored saved co-op inventory ({dto.LoadoutTowers.Count} towers, {dto.StorageCards.Count} cards).");
             }
@@ -793,7 +791,7 @@ namespace EmberwardCoop.Sync
             }
         }
 
-        private static void RefreshClientMapUI(MapData syncedMap, int selectedNodeIdx)
+        private void RefreshClientMapUI(MapData syncedMap, int selectedNodeIdx)
         {
             try
             {
@@ -802,47 +800,79 @@ namespace EmberwardCoop.Sync
                 GameRefs.SendEvent0(eGameEvents.OnAltarPactChanged);
 
                 var msp = GameRefs.GetMapSceneProcess();
-                if (msp?.mapManager != null && syncedMap?.list_MapNodeData != null)
-                {
-                    var uiNodes = msp.mapManager.list_MapNodes;
-                    if (uiNodes != null && uiNodes.Count == syncedMap.list_MapNodeData.Count)
-                    {
-                        for (int i = 0; i < uiNodes.Count; i++)
-                        {
-                            var uiNode = uiNodes[i];
-                            var dataNode = syncedMap.list_MapNodeData[i];
-                            if (uiNode == null || dataNode == null) continue;
-                            uiNode.mapNodeData.State = dataNode.State;
-                            uiNode.mapNodeData.isCleared = dataNode.isCleared;
-                            uiNode.SwitchState(dataNode.State);
-                            uiNode.SetCompleted(dataNode.isCleared, true);
-                        }
-                        msp.StartCoroutine(msp.CR_UpdateMapNodeState());
+                if (msp?.mapManager == null || syncedMap?.list_MapNodeData == null) return;
 
-                        if (selectedNodeIdx >= 0 && selectedNodeIdx < uiNodes.Count && uiNodes[selectedNodeIdx] != null)
-                            msp.SetSelectedMapNode(uiNodes[selectedNodeIdx]);
-                    }
+                var gd = GameDataManager.instance?.GameplayData;
+                var uiNodes = msp.mapManager.list_MapNodes;
+                if ((uiNodes == null || uiNodes.Count != syncedMap.list_MapNodeData.Count) && gd?.mapGenerateSetting != null)
+                {
+                    msp.mapManager.ClearMap();
+                    msp.mapManager.VisualizeMap(gd.mapGenerateSetting, syncedMap);
+                    uiNodes = msp.mapManager.list_MapNodes;
                 }
+
+                if (uiNodes == null || uiNodes.Count != syncedMap.list_MapNodeData.Count) return;
+
+                var s = _session();
+                bool isSeparateMode = (s?.Settings.EconomyMode ?? CoopEconomyMode.SharedResources) == CoopEconomyMode.SeparateResources;
+                if (isSeparateMode && _cachedSeparateRewardMapSeed != syncedMap.randomSeed)
+                {
+                    _cachedSeparateRewardMapSeed = syncedMap.randomSeed;
+                    _separateNodeRewards.Clear();
+                }
+
+                for (int i = 0; i < uiNodes.Count; i++)
+                {
+                    var uiNode = uiNodes[i];
+                    var dataNode = syncedMap.list_MapNodeData[i];
+                    if (uiNode == null || uiNode.mapNodeData == null || dataNode == null) continue;
+
+                    uiNode.mapNodeData.State = dataNode.State;
+                    uiNode.mapNodeData.isCleared = dataNode.isCleared;
+                    uiNode.mapNodeData.randomSeed = dataNode.randomSeed;
+                    uiNode.mapNodeData.stageEnvSceneName = dataNode.stageEnvSceneName;
+                    uiNode.mapNodeData.anomalyPerkType = dataNode.anomalyPerkType;
+                    uiNode.mapNodeData.extraAnomalyPerkType = dataNode.extraAnomalyPerkType;
+                    uiNode.mapNodeData.buffAnomalyPerkType = dataNode.buffAnomalyPerkType;
+                    uiNode.mapNodeData.list_BlessingPerkType = dataNode.list_BlessingPerkType;
+
+                    if (isSeparateMode)
+                    {
+                        if (dataNode.stageReward != null && dataNode.stageReward.dic_RewardEntries != null && dataNode.stageReward.dic_RewardEntries.Count > 0)
+                        {
+                            if (!_separateNodeRewards.TryGetValue(i, out var myReward) || myReward == null)
+                            {
+                                int rewardSeed = unchecked(syncedMap.randomSeed ^ (_net.LocalPlayerId * 73856093) ^ (i * 19349663) ^ 0x5A17C3);
+                                UnityEngine.Random.InitState(rewardSeed);
+                                try { myReward = msp.mapManager.CreateStageRewardData(dataNode.MapNodeType, dataNode.Step, false); } catch { }
+                                if (myReward == null || myReward.dic_RewardEntries == null || myReward.dic_RewardEntries.Count == 0)
+                                    myReward = dataNode.stageReward;
+                                _separateNodeRewards[i] = myReward;
+                            }
+                            dataNode.stageReward = myReward;
+                            uiNode.mapNodeData.stageReward = myReward;
+                        }
+                    }
+                    else
+                    {
+                        uiNode.mapNodeData.stageReward = dataNode.stageReward;
+                    }
+
+                    try { uiNode.UpdateRewardUI(); } catch { }
+                    try { uiNode.UpdateAnomalyIcon(); } catch { }
+                    uiNode.SwitchState(dataNode.State);
+                    uiNode.SetCompleted(dataNode.isCleared, true);
+                }
+
+                msp.StartCoroutine(msp.CR_UpdateMapNodeState());
+
+                if (selectedNodeIdx >= 0 && selectedNodeIdx < uiNodes.Count && uiNodes[selectedNodeIdx] != null)
+                    msp.SetSelectedMapNode(uiNodes[selectedNodeIdx]);
             }
             catch (Exception ex)
             {
                 CoopLogger.Debug(LogCategory.Sync, $"RefreshClientMapUI warning: {ex.Message}");
             }
         }
-
-        public void SendSelectOrVoteMapNode(int nodeIndex, bool isBattleNode)
-            => _session()?.Votes.CastMapNodeVote(nodeIndex);
-
-        public void HandleCmdVoteMapNode(int senderId, BinaryReader r)
-            => _session()?.Votes.HandleCmdVoteMapNode(senderId, r);
-
-        public void BroadcastMapVotes()
-            => _session()?.Votes.BroadcastMapVotes();
-
-        public void HandleEvtMapNodeVotes(BinaryReader r)
-            => _session()?.Votes.HandleEvtMapNodeVotes(r);
-
-        public void HandleCmdSelectMapNode(int senderId, BinaryReader r)
-            => _session()?.Votes.HandleCmdVoteMapNode(senderId, r);
     }
 }

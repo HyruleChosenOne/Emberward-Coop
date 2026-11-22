@@ -13,6 +13,8 @@ namespace EmberwardCoop.Rules
         public uint ClearedWorldMask = 0u;
         public byte UnlockedDifficultyMask = 0x03; // Casual + Normal baseline
         public uint UnlockedHeroMask = 1u << (int)eCharacterType.BASIC;
+        public bool EndlessUnlocked = false;
+        public bool EnigmaSanctumUnlocked = false;
         public int ProgressScore = 1;
 
         public static PlayerUnlockSummary CaptureLocal()
@@ -23,6 +25,8 @@ namespace EmberwardCoop.Rules
                 ClearedWorldMask = 0u,
                 UnlockedDifficultyMask = 0x03,
                 UnlockedHeroMask = 1u << (int)eCharacterType.BASIC,
+                EndlessUnlocked = false,
+                EnigmaSanctumUnlocked = false,
                 ProgressScore = 1
             };
 
@@ -101,6 +105,22 @@ namespace EmberwardCoop.Rules
                         catch { }
                     }
                     summary.UnlockedHeroMask = heroMask;
+
+                    try
+                    {
+                        summary.EndlessUnlocked = pld.IsAnyEndlessModeUnlocked()
+                            || (summary.ClearedWorldMask & 1u) != 0;
+                        if (summary.EndlessUnlocked) score += 20;
+                    }
+                    catch { }
+
+                    try
+                    {
+                        summary.EnigmaSanctumUnlocked = pld.IsEnigmaSanctumUnlocked();
+                        if (summary.EnigmaSanctumUnlocked) score += 30;
+                    }
+                    catch { }
+
                     summary.ProgressScore = Math.Max(1, score);
                 }
                 catch (Exception ex)
@@ -128,12 +148,22 @@ namespace EmberwardCoop.Rules
             return (UnlockedHeroMask & (1u << idx)) != 0;
         }
 
+        public bool IsRunModeBitSet(CoopRunMode mode) => mode switch
+        {
+            CoopRunMode.Campaign => true,
+            CoopRunMode.Endless => EndlessUnlocked,
+            CoopRunMode.EnigmaSanctum => EnigmaSanctumUnlocked,
+            _ => true
+        };
+
         public PlayerUnlockSummary Clone() => new PlayerUnlockSummary
         {
             UnlockedWorldMask = UnlockedWorldMask,
             ClearedWorldMask = ClearedWorldMask,
             UnlockedDifficultyMask = UnlockedDifficultyMask,
             UnlockedHeroMask = UnlockedHeroMask,
+            EndlessUnlocked = EndlessUnlocked,
+            EnigmaSanctumUnlocked = EnigmaSanctumUnlocked,
             ProgressScore = ProgressScore
         };
 
@@ -143,6 +173,8 @@ namespace EmberwardCoop.Rules
             w.Write(ClearedWorldMask);
             w.Write(UnlockedDifficultyMask);
             w.Write(UnlockedHeroMask);
+            w.Write(EndlessUnlocked);
+            w.Write(EnigmaSanctumUnlocked);
             w.Write(ProgressScore);
         }
 
@@ -152,6 +184,8 @@ namespace EmberwardCoop.Rules
             ClearedWorldMask = r.ReadUInt32(),
             UnlockedDifficultyMask = r.ReadByte(),
             UnlockedHeroMask = r.ReadUInt32(),
+            EndlessUnlocked = r.ReadBoolean(),
+            EnigmaSanctumUnlocked = r.ReadBoolean(),
             ProgressScore = r.ReadInt32()
         };
     }
@@ -178,6 +212,26 @@ namespace EmberwardCoop.Rules
             return new RealReadScope();
         }
 
+        // Unlock override applies only inside an open Co-op Lobby or an isolated Co-op session.
+        public static bool IsInCoopMenuOrCoopRun
+        {
+            get
+            {
+                var s = Sync.SessionController.Instance;
+                if (s == null || !s.Net.IsConnected) return false;
+                if (GameRefs.IsInTitle)
+                    return UI.CoopLobbyPanel.IsAnyOpen || Serialization.SoloSaveGuard.IsInIsolatedCoopSession;
+                return Serialization.SoloSaveGuard.IsInIsolatedCoopSession;
+            }
+        }
+
+        public static bool IsCoopUnlockAllEffective()
+        {
+            if (IsBypassingOverrideForRealRead) return false;
+            if (!CoopUnlockAllActive) return false;
+            return IsInCoopMenuOrCoopRun;
+        }
+
         public PlayerUnlockSummary PartyBaseline { get; private set; } = new PlayerUnlockSummary();
         public PlayerUnlockSummary LocalSummary { get; private set; } = new PlayerUnlockSummary();
         public int MostProgressedPlayerId { get; private set; } = 0;
@@ -185,7 +239,7 @@ namespace EmberwardCoop.Rules
 
         private readonly Dictionary<eWorldType, string> _worldUnlockedBy = new Dictionary<eWorldType, string>();
         private readonly Dictionary<eGameDifficultyType, string> _diffUnlockedBy = new Dictionary<eGameDifficultyType, string>();
-        private readonly Dictionary<eCharacterType, string> _heroUnlockedBy = new Dictionary<eCharacterType, string>();
+        private readonly Dictionary<CoopRunMode, string> _modeUnlockedBy = new Dictionary<CoopRunMode, string>();
 
         public void RefreshLocalSummary()
         {
@@ -197,7 +251,7 @@ namespace EmberwardCoop.Rules
             RefreshLocalSummary();
             _worldUnlockedBy.Clear();
             _diffUnlockedBy.Clear();
-            _heroUnlockedBy.Clear();
+            _modeUnlockedBy.Clear();
 
             if (net == null || !net.IsConnected || net.Roster.Count == 0)
             {
@@ -216,6 +270,8 @@ namespace EmberwardCoop.Rules
                 ClearedWorldMask = 0u,
                 UnlockedDifficultyMask = 0x03,
                 UnlockedHeroMask = 1u << (int)eCharacterType.BASIC,
+                EndlessUnlocked = false,
+                EnigmaSanctumUnlocked = false,
                 ProgressScore = 0
             };
 
@@ -235,6 +291,8 @@ namespace EmberwardCoop.Rules
                 combined.ClearedWorldMask |= u.ClearedWorldMask;
                 combined.UnlockedDifficultyMask |= u.UnlockedDifficultyMask;
                 combined.UnlockedHeroMask |= u.UnlockedHeroMask;
+                combined.EndlessUnlocked |= u.EndlessUnlocked;
+                combined.EnigmaSanctumUnlocked |= u.EnigmaSanctumUnlocked;
 
                 if (u.ProgressScore > bestScore)
                 {
@@ -254,12 +312,10 @@ namespace EmberwardCoop.Rules
                     if (u.IsDifficultyBitSet(diffs[i]) && !LocalSummary.IsDifficultyBitSet(diffs[i]) && isOther && !_diffUnlockedBy.ContainsKey(diffs[i]))
                         _diffUnlockedBy[diffs[i]] = p.Name ?? "";
                 }
-                for (int c = 1; c <= 12; c++)
-                {
-                    var ct = (eCharacterType)c;
-                    if (u.IsHeroBitSet(ct) && !LocalSummary.IsHeroBitSet(ct) && isOther && !_heroUnlockedBy.ContainsKey(ct))
-                        _heroUnlockedBy[ct] = p.Name ?? "";
-                }
+                if (u.EndlessUnlocked && !LocalSummary.EndlessUnlocked && isOther && !_modeUnlockedBy.ContainsKey(CoopRunMode.Endless))
+                    _modeUnlockedBy[CoopRunMode.Endless] = p.Name ?? "";
+                if (u.EnigmaSanctumUnlocked && !LocalSummary.EnigmaSanctumUnlocked && isOther && !_modeUnlockedBy.ContainsKey(CoopRunMode.EnigmaSanctum))
+                    _modeUnlockedBy[CoopRunMode.EnigmaSanctum] = p.Name ?? "";
             }
 
             combined.ProgressScore = Math.Max(1, bestScore);
@@ -279,7 +335,7 @@ namespace EmberwardCoop.Rules
         public bool IsWorldUnlockedForParty(eWorldType world)
         {
             if (world == eWorldType.WORLD_1_FOREST) return true;
-            if (CoopUnlockAllActive) return true;
+            if (IsCoopUnlockAllEffective()) return true;
             int idx = WorldCatalog.GetBaseWorldIndex(world);
             return idx >= 0 && PartyBaseline.IsWorldBitSet(idx);
         }
@@ -287,15 +343,15 @@ namespace EmberwardCoop.Rules
         public bool IsDifficultyUnlockedForParty(eGameDifficultyType diff)
         {
             if (diff == eGameDifficultyType.CASUAL || diff == eGameDifficultyType.NORMAL) return true;
-            if (CoopUnlockAllActive) return true;
+            if (IsCoopUnlockAllEffective()) return true;
             return PartyBaseline.IsDifficultyBitSet(diff);
         }
 
-        public bool IsHeroUnlockedForParty(eCharacterType ct)
+        public bool IsRunModeUnlockedForParty(CoopRunMode mode)
         {
-            if (ct == eCharacterType.BASIC) return true;
-            if (CoopUnlockAllActive) return true;
-            return PartyBaseline.IsHeroBitSet(ct);
+            if (mode == CoopRunMode.Campaign) return true;
+            if (IsCoopUnlockAllEffective()) return true;
+            return PartyBaseline.IsRunModeBitSet(mode);
         }
 
         public string GetWorldUnlockNote(eWorldType world)
@@ -311,7 +367,7 @@ namespace EmberwardCoop.Rules
                     return CoopLoc.F("lobby.unlocked_via_peer", MostProgressedPlayerName);
                 return CoopLoc.T("lobby.unlocked_via_party");
             }
-            if (CoopUnlockAllActive)
+            if (IsCoopUnlockAllEffective())
                 return CoopLoc.T("lobby.unlocked_via_all_toggle");
             return "";
         }
@@ -328,7 +384,24 @@ namespace EmberwardCoop.Rules
                     return CoopLoc.F("lobby.unlocked_via_peer", MostProgressedPlayerName);
                 return CoopLoc.T("lobby.unlocked_via_party");
             }
-            if (CoopUnlockAllActive)
+            if (IsCoopUnlockAllEffective())
+                return CoopLoc.T("lobby.unlocked_via_all_toggle");
+            return "";
+        }
+
+        public string GetRunModeUnlockNote(CoopRunMode mode)
+        {
+            if (mode == CoopRunMode.Campaign) return "";
+            if (LocalSummary.IsRunModeBitSet(mode)) return "";
+            if (PartyBaseline.IsRunModeBitSet(mode))
+            {
+                if (_modeUnlockedBy.TryGetValue(mode, out string who) && !string.IsNullOrWhiteSpace(who))
+                    return CoopLoc.F("lobby.unlocked_via_peer", who);
+                if (!string.IsNullOrWhiteSpace(MostProgressedPlayerName))
+                    return CoopLoc.F("lobby.unlocked_via_peer", MostProgressedPlayerName);
+                return CoopLoc.T("lobby.unlocked_via_party");
+            }
+            if (IsCoopUnlockAllEffective())
                 return CoopLoc.T("lobby.unlocked_via_all_toggle");
             return "";
         }

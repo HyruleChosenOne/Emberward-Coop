@@ -50,7 +50,6 @@ namespace EmberwardCoop.Networking
         private readonly Dictionary<int, ulong> _peerIdToSteam = new Dictionary<int, ulong>();
         private readonly Dictionary<int, string> _peerNames = new Dictionary<int, string>();
         private readonly Dictionary<int, int> _peerPings = new Dictionary<int, int>();
-        private readonly Dictionary<ulong, DateTime> _peerLastHeardUtc = new Dictionary<ulong, DateTime>();
         private readonly List<LobbySummary> _discoveredLobbies = new List<LobbySummary>();
         private readonly Dictionary<ulong, DateTime> _pendingFriendLobbies = new Dictionary<ulong, DateTime>();
 
@@ -449,7 +448,7 @@ namespace EmberwardCoop.Networking
                 if ((utcNow - _lastMemberSyncUtc).TotalSeconds >= 0.5)
                 {
                     _lastMemberSyncUtc = utcNow;
-                    SyncLobbyMembers(utcNow);
+                    SyncLobbyMembers();
                 }
 
                 DrainChannel(ReliableChannel, onPacket);
@@ -567,7 +566,7 @@ namespace EmberwardCoop.Networking
             }
         }
 
-        private void SyncLobbyMembers(DateTime utcNow)
+        private void SyncLobbyMembers()
         {
             if (_currentLobbyId.m_SteamID == 0) return;
 
@@ -601,7 +600,6 @@ namespace EmberwardCoop.Networking
                     _steamToPeerId[member.m_SteamID] = pid;
                     _peerIdToSteam[pid] = member.m_SteamID;
                     _peerNames[pid] = name;
-                    _peerLastHeardUtc[member.m_SteamID] = utcNow;
                     SteamNetworking.AcceptP2PSessionWithUser(member);
                     OnPeerConnected?.Invoke(pid, name, member.m_SteamID);
                 }
@@ -621,10 +619,21 @@ namespace EmberwardCoop.Networking
                 _peerIdToSteam.Remove(pid);
                 _peerNames.Remove(pid);
                 _peerPings.Remove(pid);
-                _peerLastHeardUtc.Remove(sid);
                 try { SteamNetworking.CloseP2PSessionWithUser(new CSteamID(sid)); } catch { }
                 OnPeerDisconnected?.Invoke(pid, name);
             }
+        }
+
+        private bool IsCurrentLobbyMember(CSteamID userId)
+        {
+            if (_currentLobbyId.m_SteamID == 0 || userId.m_SteamID == 0) return false;
+            int count = SteamMatchmaking.GetNumLobbyMembers(_currentLobbyId);
+            for (int i = 0; i < count; i++)
+            {
+                if (SteamMatchmaking.GetLobbyMemberByIndex(_currentLobbyId, i).m_SteamID == userId.m_SteamID)
+                    return true;
+            }
+            return false;
         }
 
         private void DrainChannel(int channel, Action<IncomingPacket> onPacket)
@@ -668,6 +677,8 @@ namespace EmberwardCoop.Networking
                 {
                     if (!_steamToPeerId.TryGetValue(remoteId.m_SteamID, out int pid))
                     {
+                        if (!IsCurrentLobbyMember(remoteId))
+                            continue;
                         pid = _nextPeerId++;
                         string name = SteamFriends.GetFriendPersonaName(remoteId);
                         if (string.IsNullOrWhiteSpace(name)) name = $"SteamPlayer {pid}";
@@ -677,7 +688,6 @@ namespace EmberwardCoop.Networking
                         SteamNetworking.AcceptP2PSessionWithUser(remoteId);
                         OnPeerConnected?.Invoke(pid, name, remoteId.m_SteamID);
                     }
-                    _peerLastHeardUtc[remoteId.m_SteamID] = DateTime.UtcNow;
 
                     if (type == PacketType.Ping && len >= 8)
                     {
@@ -794,7 +804,6 @@ namespace EmberwardCoop.Networking
             _peerIdToSteam.Clear();
             _peerNames.Clear();
             _peerPings.Clear();
-            _peerLastHeardUtc.Clear();
             _currentLobbyId = default;
             _hostSteamId = default;
             _role = SessionRole.Offline;

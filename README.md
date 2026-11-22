@@ -6,32 +6,30 @@
 
 Online P2P and Direct LAN co-op mod (2–4 players) for **Emberward**, built with BepInEx 6 (IL2CPP) and Harmony.
 
-Hosts can run sessions over Steam P2P or Direct LAN using either a **Shared Resources** pool or **Separate Resources** with per-player economies and tower ownership. Co-op runs start fresh in their own isolated session with dedicated co-op saves (`CoopSaves/`), leaving every player's active single-player run untouched while still saving earned meta-progression unlocks to both host and client solo profiles.
+Hosts can run sessions over Steam P2P or Direct LAN in **Campaign**, **Endless Mode**, or **Enigma Sanctum**, using either a **Shared Resources** pool or **Separate Resources** with per-player economies and tower ownership. Co-op runs stay isolated in their own session with dedicated save files (`CoopSaves/`), leaving single-player active runs untouched while still writing earned meta-progression unlocks to both host and client solo profiles.
 
 ---
 
 ## Features
 
-- **Online Steam P2P & Direct LAN:** Host Friends-Only, Public, or Private Steam lobbies with lobby codes and Steam overlay invites, or host directly over LAN (TCP + UDP) with automatic LAN discovery. Lobby queries filter strictly for valid Emberward Co-op sessions.
-- **Standalone Co-op Runs & Dedicated Save/Load:** Co-op sessions never load or overwrite single-player active-run save slots on either host or clients. Hosts can start a fresh co-op run or resume a previously saved co-op run from the Pre-Run Lobby (`NEW CO-OP RUN` / `LOAD CO-OP RUN`), with automatic mid-run saving (map entry, stage clears, wave ends, exit to menu) and a manual **SAVE CO-OP RUN** button in the pause menu.
-- **Hero, Loadout & Unlock Flow:**
-  - The host selects the run's **Hero**, **World/Stage**, and **Difficulty**, synced live to all connected clients.
-  - **Core Health** is always a single shared pool across the entire party in both modes.
-  - Selectable worlds, difficulties, and heroes automatically resolve from the **most-progressed player in the lobby**, plus an optional host-controlled **Unlock All Maps/Modes** toggle that applies strictly in memory for co-op only without modifying solo savefiles.
+- **Online Steam P2P & Direct LAN:** Host Friends-Only, Public, or Private Steam lobbies with numeric lobby codes and Steam invite overlay support, or host directly over LAN (TCP + UDP) with automatic LAN discovery. Lobby queries filter strictly for valid Emberward Co-op sessions.
+- **Supported Game Modes:** Play **Campaign** (Worlds 1–5 and Chaos Realm across Casual, Normal, Heroic, and Nightmare), **Endless Mode** (stage pools per world plus Random Endless Challenge), and **Enigma Sanctum**.
 - **Shared vs. Separate Resources:**
-  - **Shared Resources:** Unified gold, energy, core health, and (by default) shared starting loadout, towers, and cards. Includes a **Shared Loadouts & Cards** toggle (`Default: On`) if you want shared team gold with individual player loadouts and decks.
-  - **Separate Resources:** Independent gold, hands, decks, per-player starting tower/block loadouts picked in the Pre-Run Lobby, per-player tower/block ownership (color-coded base rings and read-only inspection on teammate towers), and mid-run gold gifting.
-- **Map Voting & Synchronized Drafting:** Both host and clients vote on available map nodes with live vote badges above nodes and automatic consensus/tie-break resolution. In Shared Draft mode, clients inspect options, vote, and request rerolls live; in Separate/Individual mode, matching reward drafts and map-node shops/events open simultaneously with deterministic per-player seeds and a drafting completion barrier so players are not pulled out mid-pick.
-- **Session Rules & Presets:** Host-configurable multipliers for enemy HP, wave density, enemy speed, boss HP/armor, starting gold split, wave income scaling, shared turn block caps, shared core HP bonus, speed control permissions, and wave start policy. Includes four built-in presets (*Balanced Co-op*, *Casual*, *Tactical Hardcore*, *Chaos*) and JSON custom preset save/load.
-- **Presence & Tactical Tools:** Color-coded player names (with untinted hero portraits and a host/player color picker in Co-op Settings), remote player cursors, translucent ghost previews of hovered/rotated tetromino blocks and towers, contextual pings and a 5-slice ping wheel, grid-snapped maze path sketching, a 10-sticker emote wheel with 6 quick callouts, build-phase quick undo (`Ctrl+Z`), a collapsible in-run Players HUD with inline ping readouts and hover previews, and an auto-hiding social chat log. Camera panning and zooming lock while radial wheels or co-op modals are active.
-- **Sync Safety & Solo Meta-Progression:** Periodic state-hash checks with automatic resync, mid-wave auto-pause modal on peer disconnect, post-run contribution breakdown on victory/defeat screens, and solo profile commits for XP, stage/world clears, boss clear flags, codex entries, and achievements for both host and clients.
-- **In-Game Mod Settings & Localization:** Pick your player/host name color, rebind hotkeys, and adjust HUD compactness, sticker scale/volume, mute toggles, and disconnect auto-pause from `Pause -> CO-OP SETTINGS` or the Lobby `Mod Settings` button. Automatically follows Emberward's active language across 10 languages (`en`, `de`, `es`, `fr`, `ja`, `ko`, `pt-BR`, `ru`, `zh-CN`, `zh-TW`) using editable JSON files in `Languages/`.
+  - **Shared Resources:** Unified gold, energy, core health, towers, cards, and relics. Vanilla Academy, reward, shop, chest, altar, and campsite popups open across the party with deterministic shared seeds, live client voting, reroll requests, and host-synced picks.
+  - **Separate Resources:** Independent gold, hands, decks, and relics, per-player tower and block ownership (color-coded base rings and read-only inspection on teammate towers), mid-run gold gifting, and simultaneous independent vanilla drafts/shops with deterministic per-player seeds plus a drafting barrier so nobody is pulled out mid-pick.
+  - **Core Health** is always a single shared pool across the party in both modes.
+- **Vanilla Hero & Progression Flow:**
+  - Run hero and ember selection uses Emberward's in-game Home screen (selected and confirmed by the host, synced live to clients), followed by the vanilla Academy draft.
+  - Selectable modes, worlds, and difficulties resolve from the **most-progressed player in the lobby**. An optional **Unlock All Maps/Modes (Co-op Only)** toggle in Mod Settings applies strictly in memory inside the Co-op Lobby and active co-op runs without modifying solo savefiles.
+- **Standalone Co-op Saves & Solo Meta-Progression:** Co-op never loads or overwrites single-player active-run save slots on either host or clients. Hosts can start a new run or resume a saved co-op run from the Pre-Run Lobby (`NEW CO-OP RUN` / `LOAD CO-OP RUN`), with automatic saves on map entry, stage clears, wave ends, and exit to menu, plus a manual **SAVE CO-OP RUN** button in the pause menu. Earned XP, stage/world clear records, boss clear flags, codex entries, and achievements commit to both host and client solo profiles.
+- **Map Voting & Session Rules:** Both host and clients vote on available map nodes with live vote chips and automatic consensus/tie-break resolution. Hosts can configure enemy HP, wave density, enemy speed, boss HP/armor, starting gold split, wave income scaling, shared turn block caps, shared core HP bonus, gold gifting caps, draft sync mode, and speed control permissions. Includes four built-in presets (*Balanced Co-op*, *Casual*, *Tactical Hardcore*, *Chaos*) and JSON preset save/load.
+- **Presence & Tactical Tools:** Color-coded player names (portraits stay untinted), Lobby Hero Avatar selector, remote player cursors, translucent ghost previews of hovered/rotated blocks and towers, contextual pings and a 5-slice ping wheel, grid-snapped maze path sketching, a 10-sticker emote wheel with 6 quick callouts, a collapsible Players HUD with inline latency readouts and hover tooltips, and an auto-hiding social chat log. Camera panning/zooming and board clicks lock while radial wheels, sketching, or co-op modals are active.
+- **Sync Safety & Post-Run Breakdown:** Periodic state-hash checks with automatic resync, mid-wave auto-pause modal on peer disconnect, and a post-run contribution summary on victory and defeat screens.
+- **Mod Settings & Localization:** Change your player color, toggle co-op-only unlocks, rebind hotkeys, and adjust HUD compactness, cursors/ghosts/rings, sticker scale/volume, mute toggles, and disconnect auto-pause from `Pause -> CO-OP SETTINGS` or the Lobby `Mod Settings` button. Follows Emberward's active language across 10 editable JSON files in `Languages/` (`en`, `de`, `es`, `fr`, `ja`, `ko`, `pt-BR`, `ru`, `zh-CN`, `zh-TW`).
 
 ---
 
 ## Prerequisites & Requirements
-
-Before installing the mod, make sure the following prerequisites are in place:
 
 | Requirement | Details |
 | :--- | :--- |
@@ -80,17 +78,16 @@ All players in a session must have the same mod version installed.
 
 ## Default Controls
 
-All primary bindings can be changed in-game via **Pause -> CO-OP SETTINGS** or the Lobby **Mod Settings** button (saved to `BepInEx/config/com.emberward.coop.cfg`).
+Primary bindings can be changed in-game via **Pause -> CO-OP SETTINGS** or the Lobby **Mod Settings** button (saved to `BepInEx/config/com.emberward.coop.cfg`).
 
 | Action | Default Input | Notes |
 | :--- | :--- | :--- |
-| **Toggle Co-op Lobby** | `F8` | Opens/closes the pre-run lobby on the title screen |
+| **Toggle Co-op Lobby** | `F8` | Opens or closes the pre-run lobby on the title screen |
 | **Toggle Players HUD** | `F7` | Collapses or expands the in-run Players HUD |
-| **Emote / Sticker Wheel** | `T` | Tap to click a sticker, or hold & release on a slice; `Tab` or scroll wheel switches to Callouts (`1`–`6` fire directly) |
+| **Emote / Sticker Wheel** | `T` | Tap to click a sticker, or hold and release on a slice; `Tab` or scroll wheel switches to Callouts (`1`–`6` send directly) |
 | **Smart Ping / Ping Wheel** | `Middle Mouse` | Tap for a context-aware ping; hold to open the 5-slice tactical wheel |
 | **Quick Tactical Pings** | `F1` – `F5` | Direct pings at cursor: Build Maze (`F1`), Place DPS (`F2`), Need Gold (`F3`), Upgrade/Focus (`F4`), Watch Lane (`F5`) |
 | **Maze Path Sketching** | `Left Alt + Left Drag` | Draws a temporary tile-snapped directional path visible to teammates |
-| **Build-Phase Quick Undo** | `Ctrl + Z` | Undoes your last tower or block placement within the build-phase grace window (full refund/card return) |
 
 ---
 
@@ -106,7 +103,7 @@ All primary bindings can be changed in-game via **Pause -> CO-OP SETTINGS** or t
    ```powershell
    dotnet build EmberwardCoop.csproj -c Release
    ```
-   The compiled `EmberwardCoop.dll` and `Languages/` folder are output to `bin/Release/`. Copy both into `<EmberwardDir>/BepInEx/plugins/EmberwardCoop/`.
+   The compiled `EmberwardCoop.dll` and `Languages/` folder are written to `bin/Release/`. Copy both into `<EmberwardDir>/BepInEx/plugins/EmberwardCoop/`.
 
 ---
 

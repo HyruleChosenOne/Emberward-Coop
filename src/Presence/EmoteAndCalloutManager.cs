@@ -421,7 +421,7 @@ namespace EmberwardCoop.Presence
             string senderName = _net.GetPlayerName(playerId);
             string heroId = _net.GetPlayerAvatarHeroId(playerId);
             string label = CoopLoc.T(StickerLocKeys[(int)id]);
-            float scale = Mathf.Clamp(CoopConfig.StickerScale.Value, 0.6f, 1.4f);
+            float scale = CoopConfig.GetEffectiveStickerScale();
 
             if (hasWorld && Camera.main != null)
             {
@@ -467,7 +467,7 @@ namespace EmberwardCoop.Presence
             string senderName = _net.GetPlayerName(playerId);
             string heroId = _net.GetPlayerAvatarHeroId(playerId);
             string phrase = CoopLoc.T(CalloutLocKeys[(int)id]);
-            float scale = Mathf.Clamp(CoopConfig.StickerScale.Value, 0.6f, 1.4f);
+            float scale = CoopConfig.GetEffectiveStickerScale();
 
             CoopLogger.PushChatMessage(ChatEntryKind.QuickCallout, $"{senderName}: \"{phrase}\"", playerCol);
 
@@ -713,7 +713,6 @@ namespace EmberwardCoop.Presence
             _wheelCenterRect.sizeDelta = new Vector2(300f, 300f);
             _wheelCenterGroup = centerGo.AddComponent<CanvasGroup>();
 
-            // Compact top tab pill bar (Stickers / Quick-Chat)
             var tabsBar = NativeStyleProvider.CreatePanel(centerGo.transform, "TabsBar", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
             var tabsRt = tabsBar.GetComponent<RectTransform>();
             tabsRt.anchoredPosition = new Vector2(0f, 160f);
@@ -741,7 +740,6 @@ namespace EmberwardCoop.Presence
             _tabCalloutBg = cTabBtn.GetComponent<Image>();
             _tabCalloutTxt = cTabBtn.GetComponentInChildren<TMP_Text>();
 
-            // --- TAB 1: Compact Emberward Medallion Sticker Ring ---
             _stickerRingGroup = new GameObject("StickerRing");
             _stickerRingGroup.transform.SetParent(centerGo.transform, false);
             NativeStyleProvider.StretchFill(_stickerRingGroup.AddComponent<RectTransform>());

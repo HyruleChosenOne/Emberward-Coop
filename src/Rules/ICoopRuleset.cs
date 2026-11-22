@@ -10,7 +10,6 @@ namespace EmberwardCoop.Rules
         bool SyncsGlobalGold { get; }
         bool SyncsGlobalDeckAndHand { get; }
         bool SyncsGlobalEconomyAndHand { get; }
-        bool UsesIndividualLoadouts { get; }
         bool EnforcesEntityOwnership { get; }
         bool AllowsClientIndependentDraftsAndShops { get; }
         bool BlocksClientLocalEconomyAndHandMutations { get; }
@@ -33,12 +32,11 @@ namespace EmberwardCoop.Rules
 
         public CoopEconomyMode Mode => CoopEconomyMode.SharedResources;
         public bool SyncsGlobalGold => true;
-        public bool SyncsGlobalDeckAndHand => _settings.SharedLoadoutsInSharedMode;
-        public bool SyncsGlobalEconomyAndHand => _settings.SharedLoadoutsInSharedMode;
-        public bool UsesIndividualLoadouts => !_settings.SharedLoadoutsInSharedMode;
+        public bool SyncsGlobalDeckAndHand => true;
+        public bool SyncsGlobalEconomyAndHand => true;
         public bool EnforcesEntityOwnership => false;
-        public bool AllowsClientIndependentDraftsAndShops => !_settings.SharedLoadoutsInSharedMode;
-        public bool BlocksClientLocalEconomyAndHandMutations => _settings.SharedLoadoutsInSharedMode;
+        public bool AllowsClientIndependentDraftsAndShops => false;
+        public bool BlocksClientLocalEconomyAndHandMutations => true;
         public bool ClientSpendsOwnResourcesOnBuild => false;
         public bool SupportsResourceGifting => false;
 
@@ -46,7 +44,7 @@ namespace EmberwardCoop.Rules
         public bool CanPlayerRecallBlock(int playerId, Obj_TetrisBlock block) => true;
         public int ComputeStartingGold(int baseCoin, int playerCount) => baseCoin;
         public int ComputeScaledIncome(int positiveDelta, int playerCount) => positiveDelta;
-        public int ComputeDraftSeedSalt(int localPlayerId) => _settings.SharedLoadoutsInSharedMode ? 0 : unchecked(localPlayerId * 73856093);
+        public int ComputeDraftSeedSalt(int localPlayerId) => 0;
         public bool CanClientChangeGameSpeed() => _settings.SpeedControl == SpeedControlRule.AnyPlayer;
     }
 
@@ -65,7 +63,6 @@ namespace EmberwardCoop.Rules
         public bool SyncsGlobalGold => false;
         public bool SyncsGlobalDeckAndHand => false;
         public bool SyncsGlobalEconomyAndHand => false;
-        public bool UsesIndividualLoadouts => true;
         public bool EnforcesEntityOwnership => true;
         public bool AllowsClientIndependentDraftsAndShops => _settings.DraftMode == DraftSyncMode.SimultaneousIndependent;
         public bool BlocksClientLocalEconomyAndHandMutations => false;
@@ -76,14 +73,14 @@ namespace EmberwardCoop.Rules
         {
             if (tower == null) return false;
             int owner = _ownership.GetTowerOwner(tower);
-            return owner < 0 || owner == playerId;
+            return owner < 0 || owner == playerId || (playerId == 0 && !_ownership.IsOwnerConnected(owner));
         }
 
         public bool CanPlayerRecallBlock(int playerId, Obj_TetrisBlock block)
         {
             if (block == null) return false;
             int owner = _ownership.GetBlockOwner(block);
-            return owner < 0 || owner == playerId;
+            return owner < 0 || owner == playerId || (playerId == 0 && !_ownership.IsOwnerConnected(owner));
         }
 
         public int ComputeStartingGold(int baseCoin, int playerCount)
@@ -91,7 +88,6 @@ namespace EmberwardCoop.Rules
             if (playerCount <= 1 || _settings.StartingGold == StartingGoldRule.FullPerPlayer)
                 return baseCoin;
 
-            // Balanced Co-op Split: target ~1.30x combined starting gold across team (e.g., 65% each in 2P)
             float mult = Mathf.Clamp(1.30f / playerCount, 0.45f, 0.80f);
             return Math.Max(10, Mathf.RoundToInt(baseCoin * mult));
         }

@@ -19,25 +19,20 @@ namespace EmberwardCoop.UI
         private readonly CoopLobbyPanel _lobbyPanel;
         private NetworkManager Net => _session.Net;
 
-        // Expanded Players HUD
         private GameObject _hudRoot;
         private RectTransform _hudRect;
         private CanvasGroup _hudCg;
         private Transform _rowsContainer;
         private TMP_Text _headerText;
         private GameObject _syncDotObj;
-        private GameObject _undoBtnObj;
         private TMP_Text _emoteBtnText;
-        private TMP_Text _undoBtnText;
         private float _hudExpandAnim = 1f;
 
-        // Compact Collapsed Toggle Pill
         private GameObject _collapsedPillObj;
         private RectTransform _collapsedPillRect;
         private TMP_Text _collapsedCountText;
         private bool _isCollapsed;
 
-        // Hover Peek Tooltip
         private GameObject _peekCardObj;
         private RectTransform _peekRect;
         private CanvasGroup _peekGroup;
@@ -47,12 +42,10 @@ namespace EmberwardCoop.UI
         private TMP_Text _peekSubText;
         private TMP_Text _peekBodyText;
 
-        // Non-Obstructive Host Modal Banner
         private GameObject _modalBannerObj;
         private RectTransform _modalBannerRect;
         private TMP_Text _modalBannerText;
 
-        // Auto-Hiding Clean In-Run Chat Feed (Player Chat, Quick-Callouts, Emotes, Connections ONLY)
         private GameObject _inRunChatObj;
         private RectTransform _inRunChatRect;
         private CanvasGroup _inRunChatCg;
@@ -185,12 +178,8 @@ namespace EmberwardCoop.UI
             {
                 _lastInBattlePhase = inCombatWave;
                 _dirty = true;
-            }
-
-            if (_undoBtnObj != null)
-            {
-                bool canUndo = GameRefs.IsInBattle && _session.Undo.HasValidLocalUndo;
-                if (_undoBtnObj.activeSelf != canUndo) _undoBtnObj.SetActive(canUndo);
+                if (CoopConfig.AutoCollapseHudDuringCombat?.Value ?? false)
+                    SetCollapsed(inCombatWave, playSound: false);
             }
 
             if (_dirty || now - _lastRefreshTime >= 0.75f)
@@ -237,7 +226,6 @@ namespace EmberwardCoop.UI
             vlg.childForceExpandWidth = true;
             vlg.childForceExpandHeight = false;
 
-            // Minimal header row + collapse toggle button
             var hdr = new GameObject("HudHeader");
             hdr.transform.SetParent(_hudRoot.transform, false);
             var hlg = hdr.AddComponent<HorizontalLayoutGroup>();
@@ -262,7 +250,6 @@ namespace EmberwardCoop.UI
                 addShadow: true);
             _headerText.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
-            // Tiny amber sync dot (hidden unless desync warning active)
             _syncDotObj = new GameObject("SyncWarningDot");
             _syncDotObj.transform.SetParent(hdr.transform, false);
             var sdLe = _syncDotObj.AddComponent<LayoutElement>();
@@ -273,17 +260,6 @@ namespace EmberwardCoop.UI
             sdImg.preserveAspect = true;
             sdImg.raycastTarget = false;
             _syncDotObj.SetActive(false);
-
-            var undoBtn = NativeStyleProvider.CreateButton(hdr.transform, CoopLoc.T("hud.undo_btn"), NativeStyleProvider.ButtonDanger, () =>
-            {
-                _session.Undo.TryTriggerLocalUndo();
-                CoopInputGuard.NotifyWheelClosed(waitForMouseUp: true);
-            }, 9.5f, 19f);
-            var ule = undoBtn.GetComponent<LayoutElement>();
-            ule.minWidth = 38f; ule.preferredWidth = 42f;
-            _undoBtnObj = undoBtn.gameObject;
-            _undoBtnText = undoBtn.GetComponentInChildren<TMP_Text>();
-            _undoBtnObj.SetActive(false);
 
             var emoteBtn = NativeStyleProvider.CreateButton(hdr.transform, CoopLoc.T("hud.emotes_btn"), NativeStyleProvider.ButtonPrimary, () =>
             {
@@ -410,7 +386,6 @@ namespace EmberwardCoop.UI
             _peekBodyText = NativeStyleProvider.CreateLabel(_peekCardObj.transform, "", 11.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.TopLeft, wordWrap: true);
             _peekCardObj.SetActive(false);
 
-            // 4. Non-Obstructive Host Modal Banner (below vanilla TopCenter wave/stage bars)
             _modalBannerObj = NativeStyleProvider.CreatePanel(canvas.transform, "EWCoop_ModalBanner", NativeStyleProvider.TooltipBg, addBorder: true, roleOverride: PanelSurfaceRole.Tooltip);
             _modalBannerRect = _modalBannerObj.GetComponent<RectTransform>();
             _modalBannerRect.anchorMin = new Vector2(0.5f, 1f);
@@ -596,7 +571,6 @@ namespace EmberwardCoop.UI
 
             if (_headerText != null) _headerText.text = CoopLoc.T("hud.party_title");
             if (_emoteBtnText != null) _emoteBtnText.text = CoopLoc.T("hud.emotes_btn");
-            if (_undoBtnText != null) _undoBtnText.text = CoopLoc.T("hud.undo_btn");
             if (_syncDotObj != null) _syncDotObj.SetActive(_session.Economy.IsDesyncWarningActive);
 
             _rowRects.Clear();
@@ -623,7 +597,6 @@ namespace EmberwardCoop.UI
                 hlg.childControlHeight = true;
                 hlg.childForceExpandWidth = false;
 
-                // 1. Synced Hero Avatar Portrait inside Native Emberward Frame accented with Player Color
                 float avatarSz = compact ? 21f : 25f;
                 NativeStyleProvider.CreateHeroAvatarWidget(card.transform, p.AvatarHeroId, playerCol, avatarSz, clickable: false);
 
@@ -640,7 +613,6 @@ namespace EmberwardCoop.UI
                     cImg.raycastTarget = false;
                 }
 
-                // 2. Player Name + Inline Latency immediately to its right (never wraps or collides!)
                 var namePingRow = new GameObject("NamePingRow");
                 namePingRow.transform.SetParent(card.transform, false);
                 var npLe = namePingRow.AddComponent<LayoutElement>();
@@ -669,7 +641,6 @@ namespace EmberwardCoop.UI
 
                 NativeStyleProvider.CreateInlinePingLabel(namePingRow.transform, p.PingMs, p.IsHost, compact ? 9.5f : 10f);
 
-                // 3. Mode-Specific Economy (Separate Resources Mode ONLY)
                 if (showEconomy)
                 {
                     int gold = 0;
@@ -720,7 +691,6 @@ namespace EmberwardCoop.UI
                     }
                 }
 
-                // 4. Lightweight Status Badge (Ready / Building / Drafting / In Shop)
                 string statusText = ResolvePlayerStatusBadge(p, inCombatWave, out Color statusCol);
                 if (!string.IsNullOrEmpty(statusText))
                 {

@@ -54,7 +54,7 @@ namespace EmberwardCoop.Serialization
                 DoOverrideSocket = r.ReadBoolean(),
                 OverriddenSocketCount = r.ReadInt32()
             };
-            int rCount = r.ReadInt32();
+            int rCount = r.ReadBoundedCount(64);
             info.Runes = rCount > 0 ? new int[rCount] : Array.Empty<int>();
             for (int i = 0; i < rCount; i++) info.Runes[i] = r.ReadInt32();
             return info;
@@ -260,17 +260,17 @@ namespace EmberwardCoop.Serialization
                 isCleared = isCleared
             };
 
-            int cCount = r.ReadInt32();
+            int cCount = r.ReadBoundedCount(128);
             node.connectedIndex ??= new Il2CppSystem.Collections.Generic.List<int>();
             node.connectedIndex.Clear();
             for (int i = 0; i < cCount; i++) node.connectedIndex.Add(r.ReadInt32());
 
-            int bCount = r.ReadInt32();
+            int bCount = r.ReadBoundedCount(128);
             node.list_BlessingPerkType ??= new Il2CppSystem.Collections.Generic.List<eItemType>();
             node.list_BlessingPerkType.Clear();
             for (int i = 0; i < bCount; i++) node.list_BlessingPerkType.Add((eItemType)r.ReadInt32());
 
-            int eCount = r.ReadInt32();
+            int eCount = r.ReadBoundedCount(128);
             node.List_ExtraData ??= new Il2CppSystem.Collections.Generic.List<int>();
             node.List_ExtraData.Clear();
             for (int i = 0; i < eCount; i++) node.List_ExtraData.Add(r.ReadInt32());
@@ -281,7 +281,7 @@ namespace EmberwardCoop.Serialization
                 int gem = r.ReadInt32();
                 bool unknown = r.ReadBoolean();
                 var sr = new StageRewardData(exp, gem) { isDisplayAsUnknown = unknown };
-                int entryCount = r.ReadInt32();
+                int entryCount = r.ReadBoundedCount(64);
                 for (int i = 0; i < entryCount; i++)
                 {
                     var rt = (eStageRewardType)r.ReadInt32();
@@ -298,15 +298,15 @@ namespace EmberwardCoop.Serialization
                 int rerollCost = r.ReadInt32();
                 bool healSold = r.ReadBoolean();
 
-                int sCount = r.ReadInt32();
+                int sCount = r.ReadBoundedCount(64);
                 var cards = new NetCardInfo[sCount];
                 for (int i = 0; i < sCount; i++) cards[i] = NetCardInfo.Read(r);
 
-                int boughtCount = r.ReadInt32();
+                int boughtCount = r.ReadBoundedCount(64);
                 var bought = new bool[boughtCount];
                 for (int i = 0; i < boughtCount; i++) bought[i] = r.ReadBoolean();
 
-                int discCount = r.ReadInt32();
+                int discCount = r.ReadBoundedCount(64);
                 var disc = new bool[discCount];
                 for (int i = 0; i < discCount; i++) disc[i] = r.ReadBoolean();
 
@@ -399,7 +399,7 @@ namespace EmberwardCoop.Serialization
 
         public static void ReadAltarPactsInto(BinaryReader r, GameplayData gd)
         {
-            int count = r.ReadInt32();
+            int count = r.ReadBoundedCount(64);
             if (gd == null)
             {
                 for (int i = 0; i < count; i++) { r.ReadInt32(); r.ReadInt32(); r.ReadInt32(); }
@@ -431,7 +431,7 @@ namespace EmberwardCoop.Serialization
 
         public static void ReadHardModeSettingInto(BinaryReader r, GameplayData gd)
         {
-            int count = r.ReadInt32();
+            int count = r.ReadBoundedCount(64);
             if (count <= 0) return;
             var levels = new Il2CppSystem.Collections.Generic.List<int>(count);
             for (int i = 0; i < count; i++) levels.Add(r.ReadInt32());
