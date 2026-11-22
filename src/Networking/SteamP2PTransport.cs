@@ -13,11 +13,6 @@ namespace EmberwardCoop.Networking
     {
         private const int ReliableChannel = 0;
         private const int UnreliableChannel = 1;
-        private const string LobbyKeyMod = "ew_coop_mod";
-        private const string LobbyValMod = "ew_coop_v1";
-        private const string LobbyKeyHost = "ew_host";
-        private const string LobbyKeyScene = "ew_scene";
-        private const string LobbyKeyMax = "ew_max";
 
         private const int CallbackId_LobbyCreated = 513;
         private const int CallbackId_LobbyEnter = 504;
@@ -26,7 +21,8 @@ namespace EmberwardCoop.Networking
         public TransportKind Kind => TransportKind.SteamP2P;
         public SessionRole Role => _role;
         public bool IsAvailable => IsSteamReady();
-        public string StatusText { get; private set; } = "Steam Ready";
+        public bool IsRefreshingLobbies => _pendingLobbyList.m_SteamAPICall != 0 || _pendingFriendLobbies.Count > 0;
+        public string StatusText { get; private set; } = "Steam Offline";
         public string LobbyCode => _currentLobbyId.m_SteamID != 0 ? _currentLobbyId.m_SteamID.ToString() : "";
         public int LocalPingMs { get; private set; }
 
@@ -36,6 +32,7 @@ namespace EmberwardCoop.Networking
         public event Action OnConnectedToHost;
         public event Action<string> OnDisconnected;
         public event Action<string> OnError;
+        public event Action OnLobbyListUpdated;
 
         private SessionRole _role = SessionRole.Offline;
         private CSteamID _currentLobbyId;
@@ -43,12 +40,19 @@ namespace EmberwardCoop.Networking
         private int _nextPeerId = 1;
         private int _maxPlayers = 4;
 
+        private string _advertisedScene = "CoinPage";
+        private int _advertisedPlayers = 1;
+        private string _advertisedCoopMode = LobbyMetadataKeys.ModeShared;
+        private bool _advertisedInProgress;
+        private bool _advertisedJoinableInProgress;
+
         private readonly Dictionary<ulong, int> _steamToPeerId = new Dictionary<ulong, int>();
         private readonly Dictionary<int, ulong> _peerIdToSteam = new Dictionary<int, ulong>();
         private readonly Dictionary<int, string> _peerNames = new Dictionary<int, string>();
         private readonly Dictionary<int, int> _peerPings = new Dictionary<int, int>();
         private readonly Dictionary<ulong, DateTime> _peerLastHeardUtc = new Dictionary<ulong, DateTime>();
         private readonly List<LobbySummary> _discoveredLobbies = new List<LobbySummary>();
+        private readonly Dictionary<ulong, DateTime> _pendingFriendLobbies = new Dictionary<ulong, DateTime>();
 
         private SteamAPICall_t _pendingCreateLobby;
         private SteamAPICall_t _pendingJoinLobby;
@@ -56,15 +60,20 @@ namespace EmberwardCoop.Networking
 
         private DateTime _lastMemberSyncUtc = DateTime.MinValue;
         private DateTime _lastPingSentUtc = DateTime.MinValue;
+        private DateTime _lastFriendPollUtc = DateTime.MinValue;
         private DateTime _hostLastHeardUtc = DateTime.UtcNow;
 
         private readonly Il2CppStructArray<byte> _readBuffer = new Il2CppStructArray<byte>(256 * 1024);
 
+        // Read SteamManager.s_instance directly instead of SteamManager.Initialized:
+        // Initialized invokes Instance, which spawns a SteamManager GameObject if called
+        // before the game boots and triggers a double-init crash when the game loads Steam.
         public static bool IsSteamReady()
         {
             try
             {
-                if (!SteamManager.Initialized) return false;
+                var mgr = SteamManager.s_instance;
+                if (mgr == null || !mgr.m_bInitialized) return false;
                 return SteamUser.BLoggedOn();
             }
             catch
@@ -93,7 +102,7 @@ namespace EmberwardCoop.Networking
             catch { return 0; }
         }
 
-        public bool HostLobby(SteamLobbyPrivacy privacy, int maxPlayers)
+        public bool HostLobby(SteamLobbyPrivacy privacy, int maxPlayers, string coopMode = LobbyMetadataKeys.ModeShared)
         {
             if (!IsSteamReady())
             {
@@ -104,6 +113,12 @@ namespace EmberwardCoop.Networking
 
             Shutdown();
             _maxPlayers = Math.Clamp(maxPlayers, 2, 6);
+            _advertisedPlayers = 1;
+            _advertisedCoopMode = LobbyMetadataKeys.IsValidCoopMode(coopMode) ? coopMode : LobbyMetadataKeys.ModeShared;
+            _advertisedScene = string.IsNullOrEmpty(GameRefs.ActiveScene) ? "CoinPage" : GameRefs.ActiveScene;
+            _advertisedInProgress = !GameRefs.IsInTitle;
+            _advertisedJoinableInProgress = false;
+
             try
             {
                 SteamNetworking.AllowP2PPacketRelay(true);
@@ -116,7 +131,7 @@ namespace EmberwardCoop.Networking
                 _pendingCreateLobby = SteamMatchmaking.CreateLobby(lobbyType, _maxPlayers);
                 _role = SessionRole.Connecting;
                 StatusText = "Creating Steam P2P Lobby...";
-                CoopLogger.Info(LogCategory.Net, $"Requesting Steam Lobby ({privacy}, max {_maxPlayers})...", addToFeed: true);
+                CoopLogger.Info(LogCategory.Net, $"Requesting Steam Lobby ({privacy}, max {_maxPlayers})...");
                 return true;
             }
             catch (Exception ex)
@@ -150,7 +165,7 @@ namespace EmberwardCoop.Networking
                 _pendingJoinLobby = SteamMatchmaking.JoinLobby(new CSteamID(lobbyId));
                 _role = SessionRole.Connecting;
                 StatusText = $"Joining Steam Lobby {lobbyId}...";
-                CoopLogger.Info(LogCategory.Net, StatusText, addToFeed: true);
+                CoopLogger.Info(LogCategory.Net, StatusText);
                 return true;
             }
             catch (Exception ex)
@@ -181,12 +196,26 @@ namespace EmberwardCoop.Networking
             try
             {
                 _discoveredLobbies.Clear();
-                ScanFriendLobbies();
+                _pendingFriendLobbies.Clear();
 
-                SteamMatchmaking.AddRequestLobbyListStringFilter(LobbyKeyMod, LobbyValMod, ELobbyComparison.k_ELobbyComparisonEqual);
+                // Queue Emberward-only friend lobbies for metadata verification (never add unverified lobbies)
+                QueueEmberwardFriendLobbies();
+
+                // Stage 1: Strict Steamworks matchmaking server-side filters
+                SteamMatchmaking.AddRequestLobbyListStringFilter(
+                    LobbyMetadataKeys.GameTagKey,
+                    LobbyMetadataKeys.GameTagValue,
+                    ELobbyComparison.k_ELobbyComparisonEqual);
+                SteamMatchmaking.AddRequestLobbyListStringFilter(
+                    LobbyMetadataKeys.ModSignatureKey,
+                    LobbyMetadataKeys.ModSignatureValue,
+                    ELobbyComparison.k_ELobbyComparisonEqual);
+                SteamMatchmaking.AddRequestLobbyListFilterSlotsAvailable(1);
                 SteamMatchmaking.AddRequestLobbyListDistanceFilter(ELobbyDistanceFilter.k_ELobbyDistanceFilterWorldwide);
-                SteamMatchmaking.AddRequestLobbyListResultCountFilter(25);
+                SteamMatchmaking.AddRequestLobbyListResultCountFilter(50);
+
                 _pendingLobbyList = SteamMatchmaking.RequestLobbyList();
+                OnLobbyListUpdated?.Invoke();
             }
             catch (Exception ex)
             {
@@ -194,43 +223,154 @@ namespace EmberwardCoop.Networking
             }
         }
 
-        private void ScanFriendLobbies()
+        private void QueueEmberwardFriendLobbies()
         {
             try
             {
+                AppId_t localAppId = SteamUtils.GetAppID();
                 int count = SteamFriends.GetFriendCount(EFriendFlags.k_EFriendFlagImmediate);
+                DateTime now = DateTime.UtcNow;
+
                 for (int i = 0; i < count; i++)
                 {
                     CSteamID friend = SteamFriends.GetFriendByIndex(i, EFriendFlags.k_EFriendFlagImmediate);
-                    if (SteamFriends.GetFriendGamePlayed(friend, out FriendGameInfo_t info) &&
-                        info.m_steamIDLobby.m_SteamID != 0 &&
-                        info.m_steamIDLobby.m_SteamID != _currentLobbyId.m_SteamID)
-                    {
-                        CSteamID lid = info.m_steamIDLobby;
-                        SteamMatchmaking.RequestLobbyData(lid);
-                        string hostName = SteamMatchmaking.GetLobbyData(lid, LobbyKeyHost);
-                        if (string.IsNullOrEmpty(hostName)) hostName = SteamFriends.GetFriendPersonaName(friend);
-                        string scene = SteamMatchmaking.GetLobbyData(lid, LobbyKeyScene);
-                        if (string.IsNullOrEmpty(scene)) scene = "Friend Lobby";
-                        int pCount = Math.Max(1, SteamMatchmaking.GetNumLobbyMembers(lid));
-                        int maxP = int.TryParse(SteamMatchmaking.GetLobbyData(lid, LobbyKeyMax), out int m) ? m : 4;
+                    if (!SteamFriends.GetFriendGamePlayed(friend, out FriendGameInfo_t info))
+                        continue;
 
-                        AddOrUpdateLobby(new LobbySummary
-                        {
-                            Transport = TransportKind.SteamP2P,
-                            LobbyKey = lid.m_SteamID.ToString(),
-                            HostName = hostName,
-                            AddressOrCode = lid.m_SteamID.ToString(),
-                            SteamLobbyId = lid.m_SteamID,
-                            SceneName = scene,
-                            PlayerCount = pCount,
-                            MaxPlayers = maxP,
-                            LastSeenUtc = DateTime.UtcNow
-                        });
+                    // Strictly require same Steam AppID (Emberward) — discards all unrelated Steam games
+                    if (!info.m_gameID.IsValid() || info.m_gameID.AppID() != localAppId)
+                        continue;
+
+                    CSteamID lid = info.m_steamIDLobby;
+                    if (lid.m_SteamID == 0 || lid.m_SteamID == _currentLobbyId.m_SteamID)
+                        continue;
+
+                    if (TryBuildValidatedLobby(lid, out var summary))
+                    {
+                        AddOrUpdateLobby(summary);
+                    }
+                    else
+                    {
+                        // Metadata not cached yet — request asynchronously and validate once it arrives
+                        SteamMatchmaking.RequestLobbyData(lid);
+                        _pendingFriendLobbies[lid.m_SteamID] = now;
                     }
                 }
             }
             catch { }
+        }
+
+        private void PollPendingFriendLobbies(DateTime utcNow)
+        {
+            if (_pendingFriendLobbies.Count == 0) return;
+            if ((utcNow - _lastFriendPollUtc).TotalSeconds < 0.20) return;
+            _lastFriendPollUtc = utcNow;
+
+            var completed = new List<ulong>();
+            bool changed = false;
+
+            foreach (var kv in _pendingFriendLobbies)
+            {
+                CSteamID lid = new CSteamID(kv.Key);
+                if (TryBuildValidatedLobby(lid, out var summary))
+                {
+                    AddOrUpdateLobby(summary);
+                    completed.Add(kv.Key);
+                    changed = true;
+                }
+                else if ((utcNow - kv.Value).TotalSeconds >= 3.0)
+                {
+                    // Timed out without valid Emberward Co-op Mod metadata -> discard
+                    completed.Add(kv.Key);
+                    changed = true;
+                }
+            }
+
+            for (int i = 0; i < completed.Count; i++)
+                _pendingFriendLobbies.Remove(completed[i]);
+
+            if (changed)
+                OnLobbyListUpdated?.Invoke();
+        }
+
+        // Stage 2: Strict client-side validation pass before any lobby can appear in the browser UI.
+        private bool TryBuildValidatedLobby(CSteamID lid, out LobbySummary summary)
+        {
+            summary = null;
+            if (lid.m_SteamID == 0 || lid.m_SteamID == _currentLobbyId.m_SteamID)
+                return false;
+
+            try
+            {
+                string gameTag = SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.GameTagKey);
+                if (!string.Equals(gameTag, LobbyMetadataKeys.GameTagValue, StringComparison.Ordinal))
+                    return false;
+
+                string modSig = SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.ModSignatureKey);
+                if (!string.Equals(modSig, LobbyMetadataKeys.ModSignatureValue, StringComparison.Ordinal))
+                    return false;
+
+                string hostName = (SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.HostNameKey) ?? "").Trim();
+                if (string.IsNullOrEmpty(hostName))
+                    return false;
+
+                string protoStr = SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.ProtocolVersionKey);
+                if (!int.TryParse(protoStr, out int protoVer) || protoVer <= 0)
+                    return false;
+
+                string coopMode = (SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.CoopModeKey) ?? "").Trim();
+                if (!LobbyMetadataKeys.IsValidCoopMode(coopMode))
+                    return false;
+
+                int memberLimit = SteamMatchmaking.GetLobbyMemberLimit(lid);
+                int metaMax = int.TryParse(SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.MaxPlayersKey), out int mm) ? mm : 0;
+                int maxPlayers = memberLimit > 0 ? memberLimit : metaMax;
+                if (maxPlayers < 2 || maxPlayers > 6)
+                    return false;
+
+                int steamCount = SteamMatchmaking.GetNumLobbyMembers(lid);
+                int metaCount = int.TryParse(SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.PlayerCountKey), out int mc) ? mc : 0;
+                int playerCount = steamCount > 0 ? steamCount : metaCount;
+                if (playerCount < 1 || playerCount >= maxPlayers)
+                    return false;
+
+                bool inProgress = string.Equals(SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.InProgressKey), "1", StringComparison.Ordinal);
+                bool joinableInProgress = string.Equals(SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.JoinableInProgressKey), "1", StringComparison.Ordinal);
+                if (inProgress && !joinableInProgress)
+                    return false;
+
+                string sceneName = (SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.SceneNameKey) ?? "CoinPage").Trim();
+                if (string.IsNullOrEmpty(sceneName)) sceneName = "CoinPage";
+
+                string modVer = (SteamMatchmaking.GetLobbyData(lid, LobbyMetadataKeys.ModVersionKey) ?? "").Trim();
+                if (string.IsNullOrEmpty(modVer)) modVer = $"v{protoVer}";
+
+                summary = new LobbySummary
+                {
+                    Transport = TransportKind.SteamP2P,
+                    LobbyKey = lid.m_SteamID.ToString(),
+                    GameTag = gameTag,
+                    ModSignature = modSig,
+                    ProtocolVersion = protoVer,
+                    ModVersion = modVer,
+                    HostName = hostName,
+                    CoopMode = coopMode,
+                    AddressOrCode = lid.m_SteamID.ToString(),
+                    SteamLobbyId = lid.m_SteamID,
+                    SceneName = sceneName,
+                    PlayerCount = playerCount,
+                    MaxPlayers = maxPlayers,
+                    InProgress = inProgress,
+                    JoinableInProgress = joinableInProgress,
+                    PingMs = -1,
+                    LastSeenUtc = DateTime.UtcNow
+                };
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private void AddOrUpdateLobby(LobbySummary summary)
@@ -248,27 +388,64 @@ namespace EmberwardCoop.Networking
 
         public IReadOnlyList<LobbySummary> GetDiscoveredLobbies() => _discoveredLobbies;
 
-        public void UpdateLobbyMetadata(string sceneName, int playerCount, int maxPlayers)
+        public void UpdateLobbyMetadata(string sceneName, int playerCount, int maxPlayers, string coopMode, bool inProgress, bool joinableInProgress = false)
         {
+            _advertisedScene = string.IsNullOrEmpty(sceneName) ? "CoinPage" : sceneName;
+            _advertisedPlayers = Math.Max(1, playerCount);
+            _maxPlayers = Math.Clamp(maxPlayers, 2, 6);
+            if (LobbyMetadataKeys.IsValidCoopMode(coopMode))
+                _advertisedCoopMode = coopMode;
+            _advertisedInProgress = inProgress;
+            _advertisedJoinableInProgress = joinableInProgress;
+
             if (_role != SessionRole.Host || _currentLobbyId.m_SteamID == 0 || !IsSteamReady()) return;
+            PushAllHostLobbyMetadata();
+        }
+
+        private void PushAllHostLobbyMetadata()
+        {
+            if (_currentLobbyId.m_SteamID == 0 || !IsSteamReady()) return;
             try
             {
-                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyKeyScene, string.IsNullOrEmpty(sceneName) ? "CoinPage" : sceneName);
-                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyKeyMax, maxPlayers.ToString());
+                string hostName = GetLocalSteamName();
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.GameTagKey, LobbyMetadataKeys.GameTagValue);
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.ModSignatureKey, LobbyMetadataKeys.ModSignatureValue);
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.ProtocolVersionKey, PacketProtocol.ProtocolVersion.ToString());
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.ModVersionKey, CoopPlugin.PluginVersion);
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.HostNameKey, hostName);
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.CoopModeKey, _advertisedCoopMode);
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.PlayerCountKey, _advertisedPlayers.ToString());
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.MaxPlayersKey, _maxPlayers.ToString());
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.SceneNameKey, _advertisedScene);
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.InProgressKey, _advertisedInProgress ? "1" : "0");
+                SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyMetadataKeys.JoinableInProgressKey, _advertisedJoinableInProgress ? "1" : "0");
+                SteamMatchmaking.SetLobbyJoinable(_currentLobbyId, !_advertisedInProgress || _advertisedJoinableInProgress);
             }
             catch { }
         }
 
         public void Poll(Action<IncomingPacket> onPacket)
         {
-            if (!IsSteamReady()) return;
+            if (!IsSteamReady())
+            {
+                if (_role != SessionRole.Offline)
+                {
+                    Shutdown();
+                    OnDisconnected?.Invoke("Steam connection lost.");
+                }
+                else
+                {
+                    StatusText = "Steam Offline";
+                }
+                return;
+            }
 
+            DateTime utcNow = DateTime.UtcNow;
             PollPendingApiCalls();
+            PollPendingFriendLobbies(utcNow);
 
             if (_role == SessionRole.Host || _role == SessionRole.Client)
             {
-                DateTime utcNow = DateTime.UtcNow;
-
                 if ((utcNow - _lastMemberSyncUtc).TotalSeconds >= 0.5)
                 {
                     _lastMemberSyncUtc = utcNow;
@@ -302,16 +479,12 @@ namespace EmberwardCoop.Networking
                     _currentLobbyId = new CSteamID(created.m_ulSteamIDLobby);
                     _hostSteamId = SteamUser.GetSteamID();
                     _role = SessionRole.Host;
-                    string hostName = GetLocalSteamName();
 
-                    SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyKeyMod, LobbyValMod);
-                    SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyKeyHost, hostName);
-                    SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyKeyScene, GameRefs.ActiveScene);
-                    SteamMatchmaking.SetLobbyData(_currentLobbyId, LobbyKeyMax, _maxPlayers.ToString());
+                    PushAllHostLobbyMetadata();
                     try { SteamFriends.SetRichPresence("connect", $"+connect_lobby {_currentLobbyId.m_SteamID}"); } catch { }
 
                     StatusText = $"Steam Lobby Hosted ({_currentLobbyId.m_SteamID})";
-                    CoopLogger.Info(LogCategory.Net, $"Steam P2P Lobby ready! Code: {_currentLobbyId.m_SteamID}", addToFeed: true);
+                    CoopLogger.Info(LogCategory.Net, $"Steam P2P Lobby ready! Code: {_currentLobbyId.m_SteamID}");
                     OnHostLobbyReady?.Invoke();
                 }
             }
@@ -350,32 +523,15 @@ namespace EmberwardCoop.Networking
                 _pendingLobbyList.m_SteamAPICall = 0;
                 if (!listFailed)
                 {
-                    for (int i = 0; i < (int)listRes.m_nLobbiesMatching; i++)
+                    int total = (int)listRes.m_nLobbiesMatching;
+                    for (int i = 0; i < total; i++)
                     {
                         CSteamID lid = SteamMatchmaking.GetLobbyByIndex(i);
-                        if (lid.m_SteamID == 0 || lid.m_SteamID == _currentLobbyId.m_SteamID) continue;
-
-                        string hostName = SteamMatchmaking.GetLobbyData(lid, LobbyKeyHost);
-                        if (string.IsNullOrEmpty(hostName)) hostName = "Emberward Host";
-                        string scene = SteamMatchmaking.GetLobbyData(lid, LobbyKeyScene);
-                        if (string.IsNullOrEmpty(scene)) scene = "CoinPage";
-                        int pCount = Math.Max(1, SteamMatchmaking.GetNumLobbyMembers(lid));
-                        int maxP = int.TryParse(SteamMatchmaking.GetLobbyData(lid, LobbyKeyMax), out int m) ? m : 4;
-
-                        AddOrUpdateLobby(new LobbySummary
-                        {
-                            Transport = TransportKind.SteamP2P,
-                            LobbyKey = lid.m_SteamID.ToString(),
-                            HostName = hostName,
-                            AddressOrCode = lid.m_SteamID.ToString(),
-                            SteamLobbyId = lid.m_SteamID,
-                            SceneName = scene,
-                            PlayerCount = pCount,
-                            MaxPlayers = maxP,
-                            LastSeenUtc = DateTime.UtcNow
-                        });
+                        if (TryBuildValidatedLobby(lid, out var summary))
+                            AddOrUpdateLobby(summary);
                     }
                 }
+                OnLobbyListUpdated?.Invoke();
             }
         }
 
@@ -593,6 +749,7 @@ namespace EmberwardCoop.Networking
 
         private static void SendRawSteam(CSteamID target, byte[] data, DeliveryMode mode)
         {
+            if (!IsSteamReady()) return;
             try
             {
                 var arr = new Il2CppStructArray<byte>(data.Length);
@@ -616,6 +773,7 @@ namespace EmberwardCoop.Networking
             _pendingCreateLobby.m_SteamAPICall = 0;
             _pendingJoinLobby.m_SteamAPICall = 0;
             _pendingLobbyList.m_SteamAPICall = 0;
+            _pendingFriendLobbies.Clear();
 
             if (IsSteamReady())
             {

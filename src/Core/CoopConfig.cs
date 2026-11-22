@@ -17,7 +17,9 @@ namespace EmberwardCoop.Core
         public static ConfigEntry<int> DefaultLanPort;
         public static ConfigEntry<int> MaxPlayers;
         public static ConfigEntry<int> PreferredColorIndex;
+        public static ConfigEntry<string> AvatarHeroId;
         public static ConfigEntry<KeyCode> ToggleLobbyKey;
+        public static ConfigEntry<KeyCode> ToggleHudKey;
         public static ConfigEntry<KeyCode> PingHotkey;
         public static ConfigEntry<KeyCode> EmoteWheelKey;
         public static ConfigEntry<KeyCode> SketchModifierKey;
@@ -58,7 +60,9 @@ namespace EmberwardCoop.Core
             DefaultLanPort = config.Bind("Networking", "DefaultLanPort", 27777, "TCP/UDP port for Direct LAN sessions.");
             MaxPlayers = config.Bind("Networking", "MaxPlayers", 4, "Maximum players allowed in a hosted co-op lobby (2-6).");
             PreferredColorIndex = config.Bind("Presence", "PreferredColorIndex", 0, "Preferred player accent color index (0-5).");
+            AvatarHeroId = config.Bind("Presence", "AvatarHeroId", "BASIC", "Selected playable Emberward hero ID used for your lobby and in-game HUD portrait.");
             ToggleLobbyKey = config.Bind("Controls", "ToggleLobbyKey", KeyCode.F8, "Hotkey to toggle the Co-op Lobby panel.");
+            ToggleHudKey = config.Bind("Controls", "ToggleHudKey", KeyCode.F7, "Hotkey to collapse or expand the in-run Co-op Players HUD.");
             PingHotkey = config.Bind("Controls", "PingHotkey", KeyCode.Mouse2, "Hotkey to trigger Smart Ping or hold for Tactical Ping Wheel.");
             EmoteWheelKey = config.Bind("Controls", "EmoteWheelKey", KeyCode.T, "Hotkey to open the Sticker & Quick-Callout Wheel.");
             SketchModifierKey = config.Bind("Controls", "SketchModifierKey", KeyCode.LeftAlt, "Hold this key + Left-Drag on the grid to sketch a tactical maze path for teammates.");

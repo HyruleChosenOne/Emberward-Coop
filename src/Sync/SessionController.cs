@@ -89,6 +89,7 @@ namespace EmberwardCoop.Sync
                     Settings.OnPlayerCountChanged(Net.Roster.Count);
                     HostBroadcastLobbySetup(LobbySetupChangeMask.SessionRules, targetPeerId: peer.PlayerId, resetReadyOnMajor: false);
                     SendFullSyncToPeer(peer.PlayerId);
+                    SyncHostLobbyMetadata();
                 }
                 OnPeerReconnected?.Invoke(peer.Name);
                 GameRefs.ShowGameToast($"{peer.Name} joined Co-op!", 2.5f);
@@ -103,6 +104,7 @@ namespace EmberwardCoop.Sync
                     Settings.OnPlayerCountChanged(Math.Max(2, Net.Roster.Count));
                     HostBroadcastLobbySetup(LobbySetupChangeMask.SessionRules, resetReadyOnMajor: false);
                     Run.BroadcastMapVotes();
+                    SyncHostLobbyMetadata();
                 }
                 OnMidWavePeerDisconnect?.Invoke(peer.Name);
                 GameRefs.ShowGameToast($"{peer.Name} disconnected.", 2.5f);
@@ -138,7 +140,7 @@ namespace EmberwardCoop.Sync
                 if (resetReadyOnMajor && (changeMask & LobbySetupChangeMask.MajorSetup) != 0)
                 {
                     if (Net.ResetAllClientsReady())
-                        CoopLogger.Info(LogCategory.Sync, CoopLoc.T("lobby.ready_reset_notice"), addToFeed: true);
+                        CoopLogger.Info(LogCategory.Sync, CoopLoc.T("lobby.ready_reset_notice"));
                 }
             }
 
@@ -148,6 +150,19 @@ namespace EmberwardCoop.Sync
 
             OnSettingsChanged?.Invoke();
             OnLobbySetupChanged?.Invoke(changeMask);
+            SyncHostLobbyMetadata();
+        }
+
+        public string GetCurrentCoopModeTag() =>
+            Settings.EconomyMode == CoopEconomyMode.SeparateResources
+                ? LobbyMetadataKeys.ModeSeparate
+                : LobbyMetadataKeys.ModeShared;
+
+        public void SyncHostLobbyMetadata()
+        {
+            if (!Net.IsHost) return;
+            bool inProgress = !GameRefs.IsInTitle || LobbySetup.IsLaunchingRun;
+            Net.UpdateLobbyMetadata(GameRefs.ActiveScene, GetCurrentCoopModeTag(), inProgress, joinableInProgress: false);
         }
 
         public void BroadcastSessionSettings(int targetPeerId = -1)
@@ -201,7 +216,7 @@ namespace EmberwardCoop.Sync
                 if (gdm != null)
                 {
                     gdm.StartNewGame(seed, LobbySetup.SelectedWorld, LobbySetup.DifficultyTier);
-                    CoopLogger.Info(LogCategory.Sync, $"Launching Co-op Run: {WorldCatalog.GetWorldDisplayName(LobbySetup.SelectedWorld)} ({LobbySetup.DifficultyTier}, Seed {seed})", addToFeed: true);
+                    CoopLogger.Info(LogCategory.Sync, $"Launching Co-op Run: {WorldCatalog.GetWorldDisplayName(LobbySetup.SelectedWorld)} ({LobbySetup.DifficultyTier}, Seed {seed})");
                     RefiUtilities.SceneLoader.Load("MapScene");
                 }
                 else
@@ -228,7 +243,7 @@ namespace EmberwardCoop.Sync
             LobbySetup.IsLaunchingRun = true;
             Run.PendingStageSeed = seed;
 
-            CoopLogger.Info(LogCategory.Sync, CoopLoc.T("lobby.launching_run"), addToFeed: true);
+            CoopLogger.Info(LogCategory.Sync, CoopLoc.T("lobby.launching_run"));
             OnRunLaunchStarted?.Invoke();
         }
 
@@ -307,12 +322,12 @@ namespace EmberwardCoop.Sync
                     Balance.BroadcastTurnBlockCount();
                 }
                 Ownership.BroadcastRunStats();
-                CoopLogger.Info(LogCategory.Sync, "Sent full state snapshot to all peers.", addToFeed: true);
+                CoopLogger.Info(LogCategory.Sync, "Sent full state snapshot to all peers.");
             }
             else if (Net.IsClient)
             {
                 Net.SendToHost(PacketType.RequestFullSync);
-                CoopLogger.Info(LogCategory.Sync, "Requested full state sync from Host.", addToFeed: true);
+                CoopLogger.Info(LogCategory.Sync, "Requested full state sync from Host.");
             }
         }
 
@@ -323,6 +338,8 @@ namespace EmberwardCoop.Sync
 
             if (sceneChanged)
             {
+                UI.NativeAssetRegistry.OnSceneChanged();
+                UI.NativeStyleProvider.RefreshFontForActiveLanguage();
                 Run.MenuLockDirty = true;
                 Presence.ClearAll();
                 Ghosts.ClearAll();
@@ -345,7 +362,7 @@ namespace EmberwardCoop.Sync
                     Quests.Reset();
                 }
                 if (Net.IsHost)
-                    Net.UpdateLobbyMetadata(activeScene);
+                    SyncHostLobbyMetadata();
             }
 
             Net.Poll();
@@ -378,7 +395,8 @@ namespace EmberwardCoop.Sync
             string clean = text.Trim();
             if (clean.Length > 200) clean = clean.Substring(0, 200);
             string sender = Net.LocalPlayerName ?? "Player";
-            CoopLogger.PushFeed($"{sender}: {clean}");
+            Color senderCol = CoopConfig.GetPlayerColor(Net.LocalColorIndex);
+            CoopLogger.PushChatMessage(ChatEntryKind.PlayerChat, $"{sender}: {clean}", senderCol);
             Net.SendToAllPeersOrHost(PacketType.ChatMessage, w =>
             {
                 w.WriteSafeString(sender);
@@ -390,7 +408,8 @@ namespace EmberwardCoop.Sync
         {
             string sender = r.ReadString();
             string text = r.ReadString();
-            CoopLogger.PushFeed($"{sender}: {text}");
+            Color senderCol = CoopConfig.GetPlayerColor(Net.GetPlayerColorIndex(senderId));
+            CoopLogger.PushChatMessage(ChatEntryKind.PlayerChat, $"{sender}: {text}", senderCol);
             if (Net.IsHost)
             {
                 Net.BroadcastToClients(PacketType.ChatMessage, w =>

@@ -27,7 +27,7 @@ namespace EmberwardCoop.Patches
             {
                 S.Run.HostTargetScene = targetSceneName;
                 S.Run.HostSceneLoadSeq++;
-                CoopLogger.Info(LogCategory.Sync, $"Host loading '{targetSceneName}' — syncing peers.", addToFeed: true);
+                CoopLogger.Info(LogCategory.Sync, $"Host loading '{targetSceneName}' — syncing peers.");
                 S.Run.BroadcastRunSnapshot(-1, targetSceneName);
             }
             return true;
@@ -41,7 +41,7 @@ namespace EmberwardCoop.Patches
             S.Run.HostSelectedMapNodeIndex = -1;
             S.Run.PendingStageSeed = seed;
             S.Run.MapNodeVotes.Clear();
-            CoopLogger.Info(LogCategory.Sync, $"New Co-op Run started (Seed {seed}, {worldType}, {difficulty}).", addToFeed: true);
+            CoopLogger.Info(LogCategory.Sync, $"New Co-op Run started (Seed {seed}, {worldType}, {difficulty}).");
             S.Run.BroadcastRunSnapshot(-1);
         }
 
@@ -205,21 +205,6 @@ namespace EmberwardCoop.Patches
             UI.PostRunSummaryOverlay.AttachToPopup(__instance?.transform, isVictory: true);
         }
 
-        [HarmonyPatch(typeof(UI_Defeat_Popup), nameof(UI_Defeat_Popup.ShowWindowProc), new Type[0])]
-        [HarmonyPostfix]
-        public static void Defeat_Show_Postfix(UI_Defeat_Popup __instance)
-        {
-            if (S == null || !S.Net.IsConnected) return;
-            if (S.Net.IsHost)
-            {
-                S.Ownership.BroadcastRunStats();
-                S.Modals.BroadcastVictoryOrDefeat(isVictory: false, isFinalBoss: false);
-                var gd = GameDataManager.instance?.GameplayData;
-                S.Quests.BroadcastMetaRewardGrant(25, false, false, gd != null ? gd.curWorld : eWorldType.WORLD_1_FOREST, gd != null ? gd.difficulty : eGameDifficultyType.NORMAL);
-            }
-            UI.PostRunSummaryOverlay.AttachToPopup(__instance?.transform, isVictory: false);
-        }
-
         [HarmonyPatch(typeof(MainGame), nameof(MainGame.Awake), new Type[0])]
         [HarmonyPrefix]
         public static void MainGame_Awake_Prefix()
@@ -252,7 +237,7 @@ namespace EmberwardCoop.Patches
             if (S == null || !S.Net.IsConnected) return;
             if (S.Net.IsHost)
             {
-                CoopLogger.Info(LogCategory.Sync, "Battle Stage loaded — synchronizing all peers.", addToFeed: true);
+                CoopLogger.Info(LogCategory.Sync, "Battle Stage loaded — synchronizing all peers.");
                 S.ForceFullSyncAll();
             }
             else if (S.Net.IsClient)

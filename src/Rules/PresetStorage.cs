@@ -82,7 +82,7 @@ namespace EmberwardCoop.Rules
                 };
                 string path = Path.Combine(GetPresetsDirectory(), safe + ".json");
                 File.WriteAllText(path, JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true }));
-                CoopLogger.Info(LogCategory.Sync, $"Saved custom preset '{safe}'.", addToFeed: true);
+                CoopLogger.Info(LogCategory.Sync, $"Saved custom preset '{safe}'.");
                 return true;
             }
             catch (Exception ex)
@@ -119,7 +119,7 @@ namespace EmberwardCoop.Rules
                 target.GiftPerWaveCap = Math.Max(0, dto.GiftPerWaveCap);
                 target.DraftMode = (DraftSyncMode)dto.DraftMode;
                 target.SpeedControl = (SpeedControlRule)dto.SpeedControl;
-                CoopLogger.Info(LogCategory.Sync, $"Loaded custom preset '{safe}'.", addToFeed: true);
+                CoopLogger.Info(LogCategory.Sync, $"Loaded custom preset '{safe}'.");
                 return true;
             }
             catch (Exception ex)

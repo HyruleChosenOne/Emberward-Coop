@@ -75,7 +75,7 @@ namespace EmberwardCoop.Sync
             _net.BroadcastRoster();
 
             string name = peer.Name;
-            CoopLogger.Info(LogCategory.Sync, $"{name} is {(ready ? "READY" : "not ready")} for next wave.", addToFeed: true);
+            CoopLogger.Info(LogCategory.Sync, $"{name} is {(ready ? "READY" : "not ready")} for next wave.");
             GameRefs.ShowGameToast($"{name} is ready for next wave!", 2.0f);
 
             if (ready && CoopConfig.WavePolicy.Value == WaveStartPolicy.ReadyCheckWithHostOverride && AreAllPeersWaveReady())
@@ -111,7 +111,7 @@ namespace EmberwardCoop.Sync
                 }
             }
 
-            CoopLogger.Info(LogCategory.Sync, $"{_net.GetPlayerName(senderId)} started the wave!", addToFeed: true);
+            CoopLogger.Info(LogCategory.Sync, $"{_net.GetPlayerName(senderId)} started the wave!");
             HostOnWaveStartTriggered();
             TriggerLocalStartWave();
         }

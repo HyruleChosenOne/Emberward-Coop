@@ -163,7 +163,7 @@ namespace EmberwardCoop.Sync
             });
             CoopLogger.Info(LogCategory.Modal, isVictory
                 ? (isFinalBoss ? "FINAL BOSS DEFEATED! Victory synced to all players!" : "Stage Victory synced to all players!")
-                : "Defeat synced to all players.", addToFeed: true);
+                : "Defeat synced to all players.");
         }
 
         public void HandleEvtVictoryOrDefeat(BinaryReader r)
@@ -172,7 +172,7 @@ namespace EmberwardCoop.Sync
             bool isFinalBoss = r.ReadBoolean();
             CoopLogger.Info(LogCategory.Modal, isVictory
                 ? (isFinalBoss ? "VICTORY! Final Boss defeated — waiting for Host on summary screen." : "Stage Cleared! Waiting for Host to collect rewards & continue.")
-                : "Defeat! Waiting for Host to retry or return to title.", addToFeed: true);
+                : "Defeat! Waiting for Host to retry or return to title.");
 
             GameRefs.ShowGameToast(isVictory
                 ? (isFinalBoss ? "Co-op Victory! Waiting for Host..." : "Stage Clear! Host is collecting rewards...")

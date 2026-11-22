@@ -12,13 +12,13 @@ Hosts can run sessions over Steam P2P or Direct LAN using either a **Shared Reso
 
 ## Features
 
-- **Online Steam P2P & Direct LAN:** Host Friends-Only, Public, or Private Steam lobbies with lobby codes and Steam overlay invites, or host directly over LAN (TCP + UDP) with automatic LAN discovery.
-- **Pre-Run Co-op Lobby:** Accessible from the title screen (`CO-OP` button or `F8`). The host configures the world/stage, difficulty, resource mode, and balance rules with live updates to all connected clients before launching the run.
+- **Online Steam P2P & Direct LAN:** Host Friends-Only, Public, or Private Steam lobbies with lobby codes and Steam overlay invites, or host directly over LAN (TCP + UDP) with automatic LAN discovery. Lobby queries filter strictly for valid Emberward Co-op sessions.
+- **Pre-Run Co-op Lobby:** Accessible from the title screen (`CO-OP` button or `F8`). The host configures the world/stage, difficulty, resource mode, and balance rules with live updates to all connected clients, while each player can pick a playable hero portrait avatar for the session.
 - **Shared vs. Separate Resources:**
   - **Shared Resources:** Unified gold, energy, deck, and hand pool synced across the party with shared build, upgrade, and targeting control.
   - **Separate Resources:** Independent gold, hands, decks, and per-player tower/block ownership (color-coded base rings and read-only inspection on teammate towers), plus mid-run gold gifting and simultaneous independent or host-shared reward drafts and shops.
 - **Session Rules & Presets:** Host-configurable multipliers for enemy HP, wave density, enemy speed, boss HP/armor, starting gold split, wave income scaling, shared turn block caps, core HP scaling, speed control permissions, and wave start policy. Includes four built-in presets (*Balanced Co-op*, *Casual*, *Tactical Hardcore*, *Chaos*) and JSON custom preset save/load.
-- **Presence & Tactical Tools:** Color-coded remote player cursors, translucent ghost previews of hovered/rotated tetromino blocks and towers, contextual pings and a 5-slice ping wheel, grid-snapped maze path sketching, a 10-sticker emote wheel with 6 quick callouts, build-phase quick undo (`Ctrl+Z`), and teammate HUD hover previews.
+- **Presence & Tactical Tools:** Color-coded remote player cursors, translucent ghost previews of hovered/rotated tetromino blocks and towers, contextual pings and a 5-slice ping wheel, grid-snapped maze path sketching, a 10-sticker emote wheel with 6 quick callouts, build-phase quick undo (`Ctrl+Z`), a collapsible in-run Players HUD with inline ping readouts and hover previews, and an auto-hiding social chat log. Camera panning and zooming lock while radial wheels or co-op modals are active.
 - **Sync Safety & Progression:** Periodic state-hash checks with automatic resync, mid-wave auto-pause modal on peer disconnect, isolated client sessions so solo saves are not overwritten (while XP, codex records, and achievements still commit to the client's profile), and a post-run contribution breakdown on victory/defeat screens.
 - **In-Game Mod Settings & Localization:** Rebind hotkeys and adjust HUD compactness, sticker scale/volume, mute toggles, and disconnect auto-pause from `Pause -> CO-OP SETTINGS` or the Lobby `Mod Settings` button. Automatically follows Emberward's active language across 10 languages (`en`, `de`, `es`, `fr`, `ja`, `ko`, `pt-BR`, `ru`, `zh-CN`, `zh-TW`) using editable JSON files in `Languages/`.
 
@@ -80,7 +80,8 @@ All primary bindings can be changed in-game via **Pause -> CO-OP SETTINGS** or t
 | Action | Default Input | Notes |
 | :--- | :--- | :--- |
 | **Toggle Co-op Lobby** | `F8` | Opens/closes the pre-run lobby on the title screen |
-| **Emote / Sticker Wheel** | `T` | Tap to click a sticker, or hold & release on a slice; `Tab` switches to Callouts (`1`–`6` fire directly) |
+| **Toggle Players HUD** | `F7` | Collapses or expands the in-run Players HUD |
+| **Emote / Sticker Wheel** | `T` | Tap to click a sticker, or hold & release on a slice; `Tab` or scroll wheel switches to Callouts (`1`–`6` fire directly) |
 | **Smart Ping / Ping Wheel** | `Middle Mouse` | Tap for a context-aware ping; hold to open the 5-slice tactical wheel |
 | **Quick Tactical Pings** | `F1` – `F5` | Direct pings at cursor: Build Maze (`F1`), Place DPS (`F2`), Need Gold (`F3`), Upgrade/Focus (`F4`), Watch Lane (`F5`) |
 | **Maze Path Sketching** | `Left Alt + Left Drag` | Draws a temporary tile-snapped directional path visible to teammates |

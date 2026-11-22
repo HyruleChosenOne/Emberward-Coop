@@ -24,6 +24,7 @@ namespace EmberwardCoop.Networking
         public string LocalPlayerName { get; set; } = "Player";
         public string HostPlayerName { get; private set; } = "Host";
         public int LocalColorIndex { get; private set; } = 0;
+        public string LocalAvatarHeroId { get; private set; } = "BASIC";
         public int PingMs => _active?.LocalPingMs ?? 0;
         public string StatusText => _active?.StatusText ?? "Offline";
         public string LobbyCode => _active?.LobbyCode ?? "";
@@ -36,25 +37,34 @@ namespace EmberwardCoop.Networking
         public event Action<string> OnDisconnectedFromSession;
         public event Action<string> OnConnectionError;
         public event Action OnRosterUpdated;
+        public event Action OnLobbyListUpdated;
 
         public bool LastDisconnectWasIntentional { get; private set; }
 
         private Action<IncomingPacket> _packetHandler;
+        private string _currentCoopMode = LobbyMetadataKeys.ModeShared;
+        private bool _hasInitialRosterSync;
+        private readonly HashSet<int> _knownRosterIds = new HashSet<int>();
 
         public void Initialize(Action<IncomingPacket> packetHandler)
         {
             _packetHandler = packetHandler;
-            LocalPlayerName = SteamP2PTransport.IsSteamReady()
-                ? SteamP2PTransport.GetLocalSteamName()
-                : (CoopConfig.PlayerName?.Value ?? "Player");
+            LocalPlayerName = CoopConfig.PlayerName?.Value ?? "Player";
             LocalColorIndex = Math.Clamp(CoopConfig.PreferredColorIndex?.Value ?? 0, 0, CoopConfig.PlayerPalette.Length - 1);
+            LocalAvatarHeroId = UI.NativeAssetRegistry.NormalizeHeroId(CoopConfig.AvatarHeroId?.Value);
 
             WireTransport(Lan);
             WireTransport(Steam);
             Steam.OnHostLobbyReady += () =>
             {
-                if (_active == Steam) OnRosterUpdated?.Invoke();
+                if (_active == Steam)
+                {
+                    UpdateLobbyMetadata(GameRefs.ActiveScene, _currentCoopMode, !GameRefs.IsInTitle);
+                    OnRosterUpdated?.Invoke();
+                }
             };
+            Lan.OnLobbyListUpdated += () => OnLobbyListUpdated?.Invoke();
+            Steam.OnLobbyListUpdated += () => OnLobbyListUpdated?.Invoke();
             Lan.StartDiscoveryListener();
         }
 
@@ -73,7 +83,7 @@ namespace EmberwardCoop.Networking
                 if (Roster.TryGetValue(peerId, out removed))
                     Roster.Remove(peerId);
                 removed ??= new PeerInfo { PlayerId = peerId, Name = name };
-                CoopLogger.Info(LogCategory.Net, $"{removed.Name} left the lobby.", addToFeed: true);
+                CoopLogger.Info(LogCategory.Net, $"{removed.Name} left the lobby.");
                 BroadcastRoster();
                 OnPlayerLeft?.Invoke(removed);
                 OnRosterUpdated?.Invoke();
@@ -90,6 +100,7 @@ namespace EmberwardCoop.Networking
                     w.WriteSafeString(LocalPlayerName);
                     w.Write(LocalColorIndex);
                     w.Write(SteamP2PTransport.GetLocalSteamId());
+                    w.WriteSafeString(LocalAvatarHeroId);
                 });
             };
 
@@ -99,28 +110,30 @@ namespace EmberwardCoop.Networking
                 LastDisconnectWasIntentional = false;
                 Roster.Clear();
                 LocalPlayerId = 0;
-                CoopLogger.Warn(LogCategory.Net, reason, addToFeed: true);
+                CoopLogger.Warn(LogCategory.Net, reason);
                 OnDisconnectedFromSession?.Invoke(reason);
                 OnRosterUpdated?.Invoke();
             };
 
             transport.OnError += err =>
             {
-                CoopLogger.Warn(LogCategory.Net, err, addToFeed: true);
+                CoopLogger.Warn(LogCategory.Net, err);
                 OnConnectionError?.Invoke(err);
             };
         }
 
-        public bool HostLan(int port)
+        public bool HostLan(int port, string coopMode = LobbyMetadataKeys.ModeShared)
         {
             Disconnect();
+            _currentCoopMode = LobbyMetadataKeys.IsValidCoopMode(coopMode) ? coopMode : LobbyMetadataKeys.ModeShared;
             _active = Lan;
-            if (!Lan.StartHost(port, LocalPlayerName, CoopConfig.MaxPlayers.Value))
+            if (!Lan.StartHost(port, LocalPlayerName, CoopConfig.MaxPlayers.Value, _currentCoopMode))
             {
                 _active = null;
                 return false;
             }
             SetupHostRoster();
+            UpdateLobbyMetadata(GameRefs.ActiveScene, _currentCoopMode, !GameRefs.IsInTitle);
             return true;
         }
 
@@ -131,12 +144,13 @@ namespace EmberwardCoop.Networking
             Lan.ConnectAsync(ip, port);
         }
 
-        public bool HostSteam(SteamLobbyPrivacy privacy)
+        public bool HostSteam(SteamLobbyPrivacy privacy, string coopMode = LobbyMetadataKeys.ModeShared)
         {
             Disconnect();
+            _currentCoopMode = LobbyMetadataKeys.IsValidCoopMode(coopMode) ? coopMode : LobbyMetadataKeys.ModeShared;
             LocalPlayerName = SteamP2PTransport.GetLocalSteamName();
             _active = Steam;
-            if (!Steam.HostLobby(privacy, CoopConfig.MaxPlayers.Value))
+            if (!Steam.HostLobby(privacy, CoopConfig.MaxPlayers.Value, _currentCoopMode))
             {
                 _active = null;
                 return false;
@@ -162,12 +176,17 @@ namespace EmberwardCoop.Networking
         {
             LocalPlayerId = 0;
             HostPlayerName = LocalPlayerName;
+            _hasInitialRosterSync = true;
+            _knownRosterIds.Clear();
+            _knownRosterIds.Add(0);
+            CoopLogger.ClearFeed();
             Roster.Clear();
             Roster[0] = new PeerInfo
             {
                 PlayerId = 0,
                 Name = LocalPlayerName,
                 ColorIndex = LocalColorIndex,
+                AvatarHeroId = LocalAvatarHeroId,
                 PingMs = 0,
                 IsReady = true,
                 SteamId = SteamP2PTransport.GetLocalSteamId()
@@ -181,8 +200,11 @@ namespace EmberwardCoop.Networking
             LastDisconnectWasIntentional = intentional;
             _active?.Shutdown();
             _active = null;
+            _hasInitialRosterSync = false;
+            _knownRosterIds.Clear();
             Roster.Clear();
             LocalPlayerId = 0;
+            CoopLogger.ClearFeed();
             if (wasConnected)
             {
                 OnDisconnectedFromSession?.Invoke(intentional ? "Disconnected." : "Host closed the lobby.");
@@ -196,7 +218,7 @@ namespace EmberwardCoop.Networking
             if (_active == Lan)
             {
                 Lan.Poll(HandleRawPacket);
-                Steam.Poll(_ => { });
+                if (SteamP2PTransport.IsSteamReady()) Steam.Poll(_ => { });
             }
             else if (_active == Steam)
             {
@@ -205,7 +227,7 @@ namespace EmberwardCoop.Networking
             }
             else
             {
-                Steam.Poll(_ => { });
+                if (SteamP2PTransport.IsSteamReady()) Steam.Poll(_ => { });
                 Lan.Poll(_ => { });
             }
 
@@ -221,10 +243,16 @@ namespace EmberwardCoop.Networking
             }
         }
 
-        public void UpdateLobbyMetadata(string sceneName)
+        public void UpdateLobbyMetadata(string sceneName, string coopMode = null, bool? inProgress = null, bool joinableInProgress = false)
         {
+            if (!string.IsNullOrEmpty(coopMode) && LobbyMetadataKeys.IsValidCoopMode(coopMode))
+                _currentCoopMode = coopMode;
+
             if (IsHost && _active != null)
-                _active.UpdateLobbyMetadata(sceneName, Math.Max(1, Roster.Count), CoopConfig.MaxPlayers.Value);
+            {
+                bool running = inProgress ?? !GameRefs.IsInTitle;
+                _active.UpdateLobbyMetadata(sceneName, Math.Max(1, Roster.Count), CoopConfig.MaxPlayers.Value, _currentCoopMode, running, joinableInProgress);
+            }
         }
 
         public int RemotePeerCount => Math.Max(0, Roster.Count - (Roster.ContainsKey(LocalPlayerId) ? 1 : 0));
@@ -234,6 +262,11 @@ namespace EmberwardCoop.Networking
         public string GetPlayerName(int playerId) => Roster.TryGetValue(playerId, out var p) ? p.Name : $"Player #{playerId}";
 
         public int GetPlayerColorIndex(int playerId) => Roster.TryGetValue(playerId, out var p) ? p.ColorIndex : (playerId % CoopConfig.PlayerPalette.Length);
+
+        public string GetPlayerAvatarHeroId(int playerId) =>
+            Roster.TryGetValue(playerId, out var p) && !string.IsNullOrWhiteSpace(p.AvatarHeroId)
+                ? p.AvatarHeroId
+                : (playerId == LocalPlayerId ? LocalAvatarHeroId : "BASIC");
 
         private void HandleRawPacket(IncomingPacket pkt)
         {
@@ -263,6 +296,10 @@ namespace EmberwardCoop.Networking
                     if (IsHost) HandleCmdSetColor(pkt.SenderPlayerId, pkt.Payload);
                     return;
 
+                case PacketType.CmdSetAvatar:
+                    if (IsHost) HandleCmdSetAvatar(pkt.SenderPlayerId, pkt.Payload);
+                    return;
+
                 default:
                     _packetHandler?.Invoke(pkt);
                     break;
@@ -278,6 +315,7 @@ namespace EmberwardCoop.Networking
             string name = r.ReadString();
             int prefColor = r.ReadInt32();
             ulong steamId = r.ReadUInt64();
+            string avatarId = ms.Position < ms.Length ? UI.NativeAssetRegistry.NormalizeHeroId(r.ReadString()) : "BASIC";
 
             if (protoVer != PacketProtocol.ProtocolVersion)
             {
@@ -294,6 +332,7 @@ namespace EmberwardCoop.Networking
                 PlayerId = peerId,
                 Name = cleanName,
                 ColorIndex = assignedColor,
+                AvatarHeroId = avatarId,
                 PingMs = 0,
                 IsReady = false,
                 SteamId = steamId
@@ -307,7 +346,8 @@ namespace EmberwardCoop.Networking
                 w.Write(assignedColor);
             });
 
-            CoopLogger.Info(LogCategory.Net, $"{cleanName} (#{peerId}) joined via {ActiveTransportKind}!", addToFeed: true);
+            CoopLogger.Info(LogCategory.Net, $"{cleanName} (#{peerId}) joined via {ActiveTransportKind}.");
+            CoopLogger.PushChatMessage(ChatEntryKind.ConnectionSuccess, Localization.CoopLoc.F("chat.player_connected", cleanName));
             BroadcastRoster();
             OnPlayerJoined?.Invoke(peer);
             OnRosterUpdated?.Invoke();
@@ -321,7 +361,11 @@ namespace EmberwardCoop.Networking
             HostPlayerName = r.ReadString();
             LocalColorIndex = r.ReadInt32();
 
-            CoopLogger.Info(LogCategory.Net, $"Joined Host '{HostPlayerName}' as Player #{LocalPlayerId}!", addToFeed: true);
+            _hasInitialRosterSync = false;
+            _knownRosterIds.Clear();
+            CoopLogger.ClearFeed();
+            CoopLogger.Info(LogCategory.Net, $"Joined Host '{HostPlayerName}' as Player #{LocalPlayerId}.");
+            CoopLogger.PushChatMessage(ChatEntryKind.ConnectionSuccess, Localization.CoopLoc.F("chat.connected_session", HostPlayerName));
             OnJoinedHost?.Invoke();
             OnRosterUpdated?.Invoke();
         }
@@ -357,6 +401,18 @@ namespace EmberwardCoop.Networking
             using var r = new BinaryReader(ms, Encoding.UTF8);
             int requested = Math.Clamp(r.ReadInt32(), 0, CoopConfig.PlayerPalette.Length - 1);
             peer.ColorIndex = requested;
+            BroadcastRoster();
+            OnRosterUpdated?.Invoke();
+        }
+
+        private void HandleCmdSetAvatar(int peerId, byte[] payload)
+        {
+            if (!Roster.TryGetValue(peerId, out var peer)) return;
+            using var ms = new MemoryStream(payload);
+            using var r = new BinaryReader(ms, Encoding.UTF8);
+            string requested = UI.NativeAssetRegistry.NormalizeHeroId(r.ReadString());
+            if (string.Equals(peer.AvatarHeroId, requested, StringComparison.Ordinal)) return;
+            peer.AvatarHeroId = requested;
             BroadcastRoster();
             OnRosterUpdated?.Invoke();
         }
@@ -427,6 +483,26 @@ namespace EmberwardCoop.Networking
             }
         }
 
+        public void SetLocalAvatar(string heroId)
+        {
+            string norm = UI.NativeAssetRegistry.NormalizeHeroId(heroId);
+            LocalAvatarHeroId = norm;
+            if (CoopConfig.AvatarHeroId != null) CoopConfig.AvatarHeroId.Value = norm;
+            if (!IsConnected) return;
+            if (IsHost)
+            {
+                if (Roster.TryGetValue(0, out var me)) me.AvatarHeroId = norm;
+                BroadcastRoster();
+                OnRosterUpdated?.Invoke();
+            }
+            else
+            {
+                if (Roster.TryGetValue(LocalPlayerId, out var me)) me.AvatarHeroId = norm;
+                SendToHost(PacketType.CmdSetAvatar, w => w.WriteSafeString(norm));
+                OnRosterUpdated?.Invoke();
+            }
+        }
+
         public void SetPeerModal(int playerId, string modalName)
         {
             if (!IsHost) return;
@@ -450,6 +526,7 @@ namespace EmberwardCoop.Networking
                     w.Write(p.PlayerId);
                     w.WriteSafeString(p.Name);
                     w.Write(p.ColorIndex);
+                    w.WriteSafeString(p.AvatarHeroId ?? "BASIC");
                     w.Write(p.PingMs);
                     w.Write(p.IsReady);
                     w.Write(p.IsWaveReady);
@@ -472,16 +549,28 @@ namespace EmberwardCoop.Networking
                     PlayerId = r.ReadInt32(),
                     Name = r.ReadString(),
                     ColorIndex = r.ReadInt32(),
+                    AvatarHeroId = UI.NativeAssetRegistry.NormalizeHeroId(r.ReadString()),
                     PingMs = r.ReadInt32(),
                     IsReady = r.ReadBoolean(),
                     IsWaveReady = r.ReadBoolean(),
                     ActiveModal = r.ReadString(),
                     SteamId = r.ReadUInt64()
                 };
-                if (p.PlayerId == LocalPlayerId) LocalColorIndex = p.ColorIndex;
+                if (p.PlayerId == LocalPlayerId)
+                {
+                    LocalColorIndex = p.ColorIndex;
+                    LocalAvatarHeroId = p.AvatarHeroId;
+                }
                 if (p.PlayerId == 0) HostPlayerName = p.Name;
                 Roster[p.PlayerId] = p;
+                if (_hasInitialRosterSync && p.PlayerId != LocalPlayerId && !_knownRosterIds.Contains(p.PlayerId))
+                {
+                    CoopLogger.PushChatMessage(ChatEntryKind.ConnectionSuccess, Localization.CoopLoc.F("chat.player_connected", p.Name));
+                }
             }
+            _knownRosterIds.Clear();
+            foreach (var k in Roster.Keys) _knownRosterIds.Add(k);
+            _hasInitialRosterSync = true;
             OnRosterUpdated?.Invoke();
         }
 

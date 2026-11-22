@@ -25,9 +25,9 @@ namespace EmberwardCoop.Presence
             public Color Color;
             public readonly List<Vector3> Points = new List<Vector3>();
             public readonly List<GameObject> TileVisuals = new List<GameObject>();
+            public readonly List<SpriteRenderer> TileRenderers = new List<SpriteRenderer>();
             public readonly List<GameObject> ChevronVisuals = new List<GameObject>();
-            public Material TileMat;
-            public Material ChevronMat;
+            public readonly List<SpriteRenderer> ChevronRenderers = new List<SpriteRenderer>();
             public GameObject LabelObj;
             public RectTransform LabelRect;
             public CanvasGroup LabelGroup;
@@ -131,6 +131,8 @@ namespace EmberwardCoop.Presence
             }
         }
 
+        public void CancelLocalDrag() => EndLocalDrag();
+
         private void EndLocalDrag()
         {
             _isDragging = false;
@@ -210,28 +212,27 @@ namespace EmberwardCoop.Presence
             };
             trail.Points.AddRange(pts);
 
-            var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
-            trail.TileMat = CreateTranslucentMat(shader, new Color(col.r, col.g, col.b, 0.36f), 3120);
-            trail.ChevronMat = CreateTranslucentMat(shader, new Color(1f, 0.96f, 0.85f, 0.92f), 3130);
+            NativeAssetRegistry.EnsureScanned();
+            Sprite tileSprite = NativeAssetRegistry.GetSketchTileSprite();
+            Sprite arrowSprite = NativeAssetRegistry.GetSketchArrowSprite();
+            float tileScale = NormalizeSpriteScale(tileSprite, 0.92f);
+            float arrowScale = NormalizeSpriteScale(arrowSprite, 0.56f);
 
             for (int i = 0; i < pts.Count; i++)
             {
                 Vector3 p = pts[i];
-                var tile = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                tile.name = $"EWCoop_SketchTile_{playerId}_{i}";
+                var tile = new GameObject($"EWCoop_SketchTile_{playerId}_{i}");
                 tile.layer = 2;
-                var c = tile.GetComponent<Collider>();
-                if (c != null) UnityEngine.Object.Destroy(c);
+                tile.transform.position = new Vector3(p.x, p.y + 0.08f, p.z);
+                tile.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+                tile.transform.localScale = new Vector3(tileScale, tileScale, 1f);
 
-                tile.transform.position = new Vector3(p.x, p.y + 0.06f, p.z);
-                tile.transform.localScale = new Vector3(0.88f, 0.04f, 0.88f);
-                var rdr = tile.GetComponent<Renderer>();
-                if (rdr != null && trail.TileMat != null)
-                {
-                    rdr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                    rdr.sharedMaterial = trail.TileMat;
-                }
+                var sr = tile.AddComponent<SpriteRenderer>();
+                sr.sprite = tileSprite;
+                sr.color = new Color(col.r, col.g, col.b, 0.68f);
+                sr.sortingOrder = 20;
                 trail.TileVisuals.Add(tile);
+                trail.TileRenderers.Add(sr);
 
                 if (i + 1 < pts.Count)
                 {
@@ -240,8 +241,9 @@ namespace EmberwardCoop.Presence
                     if (dir.sqrMagnitude > 0.01f)
                     {
                         Vector3 mid = (p + pts[i + 1]) * 0.5f;
-                        var chev = CreateChevronVisual(mid + new Vector3(0f, 0.14f, 0f), dir.normalized, trail.ChevronMat);
-                        trail.ChevronVisuals.Add(chev);
+                        var arrowGo = CreateArrowDecal(mid + new Vector3(0f, 0.12f, 0f), dir.normalized, arrowSprite, arrowScale, out SpriteRenderer aSr);
+                        trail.ChevronVisuals.Add(arrowGo);
+                        if (aSr != null) trail.ChevronRenderers.Add(aSr);
                     }
                 }
             }
@@ -249,23 +251,27 @@ namespace EmberwardCoop.Presence
             var canvas = NativeStyleProvider.GetOrCreateOverlayCanvas();
             if (canvas != null && pts.Count > 0)
             {
-                var lblObj = new GameObject($"EWCoop_SketchLabel_{playerId}");
-                lblObj.transform.SetParent(canvas.transform, false);
-                var rt = lblObj.AddComponent<RectTransform>();
-                rt.sizeDelta = new Vector2(220f, 26f);
+                var lblObj = NativeStyleProvider.CreatePanel(canvas.transform, $"EWCoop_SketchLabel_{playerId}", NativeStyleProvider.TooltipBg, addBorder: true, isSubPanel: true);
+                var rt = lblObj.GetComponent<RectTransform>();
+                rt.anchorMin = new Vector2(0.5f, 0.5f);
+                rt.anchorMax = new Vector2(0.5f, 0.5f);
                 var cg = lblObj.AddComponent<CanvasGroup>();
                 cg.blocksRaycasts = false;
                 cg.interactable = false;
 
-                var bg = lblObj.AddComponent<Image>();
-                bg.color = new Color(0.08f, 0.07f, 0.12f, 0.86f);
-                bg.raycastTarget = false;
-                var outl = lblObj.AddComponent<Outline>();
-                outl.effectColor = col;
-                outl.effectDistance = new Vector2(1.4f, -1.4f);
+                var hlg = lblObj.AddComponent<HorizontalLayoutGroup>();
+                hlg.padding = new RectOffset(10, 12, 7, 7);
+                hlg.spacing = 5f;
+                hlg.childAlignment = TextAnchor.MiddleLeft;
+                hlg.childControlWidth = true;
+                hlg.childControlHeight = true;
+                hlg.childForceExpandWidth = false;
+                var fit = lblObj.AddComponent<ContentSizeFitter>();
+                fit.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+                fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-                var txt = NativeStyleProvider.CreateLabel(lblObj.transform, CoopLoc.F("sketch.hint", _net.GetPlayerName(playerId)), 11.5f, col, TextAlignmentOptions.Center, FontStyles.Bold);
-                NativeStyleProvider.StretchFill(txt.rectTransform, 6f, 2f);
+                NativeStyleProvider.CreateHeroAvatarWidget(lblObj.transform, _net.GetPlayerAvatarHeroId(playerId), col, 18f, clickable: false);
+                NativeStyleProvider.CreateLabel(lblObj.transform, CoopLoc.F("sketch.hint", _net.GetPlayerName(playerId)), 11.5f, col, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true);
 
                 trail.LabelObj = lblObj;
                 trail.LabelRect = rt;
@@ -275,31 +281,28 @@ namespace EmberwardCoop.Presence
             _trails[playerId] = trail;
         }
 
-        private static GameObject CreateChevronVisual(Vector3 pos, Vector3 forward, Material mat)
+        private static GameObject CreateArrowDecal(Vector3 pos, Vector3 forward, Sprite arrowSprite, float scale, out SpriteRenderer sr)
         {
-            var root = new GameObject("EWCoop_Chevron");
+            var root = new GameObject("EWCoop_SketchArrow");
             root.layer = 2;
             root.transform.position = pos;
-            root.transform.rotation = Quaternion.LookRotation(forward, Vector3.up);
+            // Lay sprite flat on XZ plane and orient +Y (sprite up) along travel forward vector
+            float yawDeg = Mathf.Atan2(forward.x, forward.z) * Mathf.Rad2Deg;
+            root.transform.rotation = Quaternion.Euler(90f, yawDeg, 0f);
+            root.transform.localScale = new Vector3(scale, scale, 1f);
 
-            for (int side = -1; side <= 1; side += 2)
-            {
-                var arm = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                arm.layer = 2;
-                var c = arm.GetComponent<Collider>();
-                if (c != null) UnityEngine.Object.Destroy(c);
-                arm.transform.SetParent(root.transform, false);
-                arm.transform.localPosition = new Vector3(side * 0.13f, 0f, -0.05f);
-                arm.transform.localRotation = Quaternion.Euler(0f, side * -38f, 0f);
-                arm.transform.localScale = new Vector3(0.08f, 0.04f, 0.36f);
-                var rdr = arm.GetComponent<Renderer>();
-                if (rdr != null && mat != null)
-                {
-                    rdr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                    rdr.sharedMaterial = mat;
-                }
-            }
+            sr = root.AddComponent<SpriteRenderer>();
+            sr.sprite = arrowSprite;
+            sr.color = new Color(1f, 0.96f, 0.86f, 0.94f);
+            sr.sortingOrder = 22;
             return root;
+        }
+
+        private static float NormalizeSpriteScale(Sprite sp, float targetWorldUnits)
+        {
+            if (sp == null) return targetWorldUnits;
+            float maxDim = Mathf.Max(sp.bounds.size.x, sp.bounds.size.y);
+            return maxDim > 0.001f ? targetWorldUnits / maxDim : targetWorldUnits;
         }
 
         private void TickTrails(float dt)
@@ -323,10 +326,13 @@ namespace EmberwardCoop.Presence
                 float fade = t > 0.70f ? Mathf.Clamp01(1f - (t - 0.70f) / 0.30f) : 1f;
                 float pulse = 0.80f + 0.20f * Mathf.Sin(time * 6.5f);
 
-                if (tr.TileMat != null)
-                    SetMatColor(tr.TileMat, new Color(tr.Color.r, tr.Color.g, tr.Color.b, 0.38f * pulse * fade));
-                if (tr.ChevronMat != null)
-                    SetMatColor(tr.ChevronMat, new Color(1f, 0.96f, 0.86f, 0.92f * fade));
+                Color tileCol = new Color(tr.Color.r, tr.Color.g, tr.Color.b, 0.70f * pulse * fade);
+                for (int r = 0; r < tr.TileRenderers.Count; r++)
+                    if (tr.TileRenderers[r] != null) tr.TileRenderers[r].color = tileCol;
+
+                Color arrowCol = new Color(1f, 0.96f, 0.86f, 0.94f * fade);
+                for (int r = 0; r < tr.ChevronRenderers.Count; r++)
+                    if (tr.ChevronRenderers[r] != null) tr.ChevronRenderers[r].color = arrowCol;
 
                 if (tr.LabelRect != null && cam != null && tr.Points.Count > 0)
                 {
@@ -334,7 +340,7 @@ namespace EmberwardCoop.Presence
                     Vector3 sp = cam.WorldToScreenPoint(anchor);
                     bool vis = sp.z > 0f && sp.x > -100f && sp.x < Screen.width + 100f && sp.y > -100f && sp.y < Screen.height + 100f;
                     if (tr.LabelObj.activeSelf != vis) tr.LabelObj.SetActive(vis);
-                    if (vis) tr.LabelRect.position = new Vector3(sp.x, sp.y, 0f);
+                    if (vis) tr.LabelRect.anchoredPosition = NativeStyleProvider.ScreenToCanvasLocal(new Vector2(sp.x, sp.y));
                     if (tr.LabelGroup != null) tr.LabelGroup.alpha = fade;
                 }
             }
@@ -377,25 +383,6 @@ namespace EmberwardCoop.Presence
             return true;
         }
 
-        private static Material CreateTranslucentMat(Shader shader, Color col, int renderQueue)
-        {
-            if (shader == null) return null;
-            var mat = new Material(shader);
-            if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);
-            if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            if (mat.HasProperty("_ZWrite")) mat.SetInt("_ZWrite", 0);
-            mat.renderQueue = renderQueue;
-            SetMatColor(mat, col);
-            return mat;
-        }
-
-        private static void SetMatColor(Material mat, Color c)
-        {
-            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", c);
-            if (mat.HasProperty("_Color")) mat.SetColor("_Color", c);
-        }
-
         private static void DestroyTrail(ActiveTrail tr)
         {
             for (int i = 0; i < tr.TileVisuals.Count; i++)
@@ -403,8 +390,6 @@ namespace EmberwardCoop.Presence
             for (int i = 0; i < tr.ChevronVisuals.Count; i++)
                 if (tr.ChevronVisuals[i] != null) UnityEngine.Object.Destroy(tr.ChevronVisuals[i]);
             if (tr.LabelObj != null) UnityEngine.Object.Destroy(tr.LabelObj);
-            if (tr.TileMat != null) UnityEngine.Object.Destroy(tr.TileMat);
-            if (tr.ChevronMat != null) UnityEngine.Object.Destroy(tr.ChevronMat);
         }
 
         public void ClearAll()

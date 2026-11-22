@@ -16,6 +16,7 @@ namespace EmberwardCoop.Networking
         CmdSetReady = 7,
         CmdSetColor = 8,
         ChatMessage = 9,
+        CmdSetAvatar = 10,
 
         RunSnapshot = 20,
         RequestFullSync = 21,

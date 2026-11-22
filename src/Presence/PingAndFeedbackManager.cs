@@ -27,15 +27,19 @@ namespace EmberwardCoop.Presence
     {
         private readonly NetworkManager _net;
 
+        private const float WheelRadius = 96f;
+
         private sealed class ActiveEffect
         {
             public GameObject RingObj;
+            public SpriteRenderer RingRenderer;
             public GameObject BeaconObj;
+            public SpriteRenderer BeaconRenderer;
             public GameObject LabelObj;
             public RectTransform LabelRect;
             public CanvasGroup LabelGroup;
             public TMP_Text LabelText;
-            public Material RingMat;
+            public Color BaseColor;
             public Vector3 WorldPos;
             public string BaseLabel;
             public float Age;
@@ -48,23 +52,28 @@ namespace EmberwardCoop.Presence
 
         private bool _holdingPingKey;
         private float _pingHoldStartTime;
-        private Vector3 _pingAnchorScreenPos;
+        private Vector2 _pingAnchorCanvasPos;
         private Vector3 _pingAnchorWorldPos;
         private bool _wheelVisible;
         private int _highlightedSlice = 0;
+        private float _openAnimProgress = 1f;
 
-        private GameObject _wheelRoot;
-        private RectTransform _wheelRect;
+        private GameObject _wheelOverlayRoot;
+        private RectTransform _wheelCenterRect;
+        private CanvasGroup _wheelCenterGroup;
+        private TMP_Text _centerLabel;
+        private readonly RectTransform[] _sliceRects = new RectTransform[5];
         private readonly Image[] _sliceBgs = new Image[5];
+        private readonly Image[] _sliceIcons = new Image[5];
         private readonly TMP_Text[] _sliceLabels = new TMP_Text[5];
 
         private static readonly (PingKind kind, string locKey, Color accent)[] WheelSlices =
         {
-            (PingKind.BuildMazeHere,  "ping.build_maze",    new Color(0.96f, 0.78f, 0.25f, 1f)),
-            (PingKind.PlaceDpsHere,   "ping.place_dps",     new Color(0.95f, 0.44f, 0.22f, 1f)),
-            (PingKind.NeedGold,       "ping.need_gold",     new Color(1.00f, 0.86f, 0.30f, 1f)),
-            (PingKind.UpgradeOrFocus, "ping.upgrade_focus", new Color(0.32f, 0.85f, 1.00f, 1f)),
-            (PingKind.WatchLane,      "ping.watch_lane",    new Color(1.00f, 0.32f, 0.32f, 1f))
+            (PingKind.BuildMazeHere,  "ping.build_maze",    new Color(0.95f, 0.77f, 0.32f, 1f)),
+            (PingKind.PlaceDpsHere,   "ping.place_dps",     new Color(0.92f, 0.48f, 0.22f, 1f)),
+            (PingKind.NeedGold,       "ping.need_gold",     new Color(0.98f, 0.84f, 0.34f, 1f)),
+            (PingKind.UpgradeOrFocus, "ping.upgrade_focus", new Color(0.36f, 0.82f, 0.96f, 1f)),
+            (PingKind.WatchLane,      "ping.watch_lane",    new Color(0.94f, 0.34f, 0.32f, 1f))
         };
 
         public PingAndFeedbackManager(NetworkManager net)
@@ -87,22 +96,31 @@ namespace EmberwardCoop.Presence
 
         private static Color GetPingAccentColor(PingKind kind) => kind switch
         {
-            PingKind.BuildMazeHere  => new Color(0.96f, 0.78f, 0.25f, 1f),
-            PingKind.PlaceDpsHere   => new Color(0.95f, 0.44f, 0.22f, 1f),
-            PingKind.NeedGold       => new Color(1.00f, 0.86f, 0.30f, 1f),
-            PingKind.UpgradeOrFocus => new Color(0.32f, 0.85f, 1.00f, 1f),
-            PingKind.WatchLane      => new Color(1.00f, 0.30f, 0.25f, 1f),
-            PingKind.NiceTower      => new Color(0.40f, 0.96f, 0.56f, 1f),
-            PingKind.WatchPortal    => new Color(0.92f, 0.28f, 0.96f, 1f),
+            PingKind.BuildMazeHere  => new Color(0.95f, 0.77f, 0.32f, 1f),
+            PingKind.PlaceDpsHere   => new Color(0.92f, 0.48f, 0.22f, 1f),
+            PingKind.NeedGold       => new Color(0.98f, 0.84f, 0.34f, 1f),
+            PingKind.UpgradeOrFocus => new Color(0.36f, 0.82f, 0.96f, 1f),
+            PingKind.WatchLane      => new Color(0.94f, 0.34f, 0.32f, 1f),
+            PingKind.NiceTower      => new Color(0.42f, 0.88f, 0.54f, 1f),
+            PingKind.WatchPortal    => new Color(0.86f, 0.38f, 0.92f, 1f),
             _                       => Color.white
         };
 
+        public void CancelAndCloseWheel(bool absorbRelease = true)
+        {
+            bool wasActive = _holdingPingKey || _wheelVisible;
+            _holdingPingKey = false;
+            CoopInputGuard.IsPingKeyHolding = false;
+            HideWheel(absorbRelease: wasActive && absorbRelease);
+        }
+
         public void TryHandleLocalPingInput()
         {
-            if (!_net.IsConnected || !GameRefs.IsInBattle || CoopInputGuard.IsEmoteWheelOpen || CoopInputGuard.IsCoopModalOpen || CoopInputGuard.IsMazeSketching)
+            if (!_net.IsConnected || !GameRefs.IsInBattle || GameRefs.IsVanillaPauseMenuOpen()
+                || CoopInputGuard.IsEmoteWheelOpen || CoopInputGuard.IsCoopModalOpen || CoopInputGuard.IsMazeSketching)
             {
-                HideWheel();
-                _holdingPingKey = false;
+                if (_holdingPingKey || _wheelVisible)
+                    CancelAndCloseWheel(absorbRelease: false);
                 return;
             }
 
@@ -112,16 +130,19 @@ namespace EmberwardCoop.Presence
             if (Input.GetKeyDown(KeyCode.F4)) { TryQuickHotkeyPing(PingKind.UpgradeOrFocus); return; }
             if (Input.GetKeyDown(KeyCode.F5)) { TryQuickHotkeyPing(PingKind.WatchLane); return; }
 
-            bool pressed = Input.GetKeyDown(CoopConfig.PingHotkey.Value);
-            bool held = Input.GetKey(CoopConfig.PingHotkey.Value);
+            KeyCode pingKey = CoopConfig.PingHotkey.Value;
+            bool pressed = Input.GetKeyDown(pingKey);
+            bool held = Input.GetKey(pingKey);
 
             if (pressed && !_holdingPingKey)
             {
                 if (TryRaycastGround(out Vector3 hitPos))
                 {
                     _holdingPingKey = true;
+                    // Immediately lock camera pan/drag from frame 0 so Mouse2 never drags the camera before the wheel pops
+                    CoopInputGuard.IsPingKeyHolding = true;
                     _pingHoldStartTime = Time.unscaledTime;
-                    _pingAnchorScreenPos = Input.mousePosition;
+                    _pingAnchorCanvasPos = ClampWheelAnchorToCanvas(NativeStyleProvider.ScreenToCanvasLocal(Input.mousePosition));
                     _pingAnchorWorldPos = hitPos;
                     _highlightedSlice = Math.Clamp((int)InferContextualPing(hitPos), 0, WheelSlices.Length - 1);
                 }
@@ -129,10 +150,18 @@ namespace EmberwardCoop.Presence
 
             if (_holdingPingKey)
             {
+                // Allow Escape or Right-Click (when ping key isn't Right-Click) to cancel cleanly without firing a ping
+                if (Input.GetKeyDown(KeyCode.Escape) || (pingKey != KeyCode.Mouse1 && Input.GetMouseButtonDown(1)))
+                {
+                    NativeStyleProvider.PlayUiOpenSound(false);
+                    CancelAndCloseWheel(absorbRelease: true);
+                    return;
+                }
+
                 float holdDur = Time.unscaledTime - _pingHoldStartTime;
                 if (held)
                 {
-                    if (holdDur >= 0.18f)
+                    if (holdDur >= 0.16f)
                         ShowOrUpdateWheel();
                 }
                 else
@@ -142,10 +171,23 @@ namespace EmberwardCoop.Presence
                         : InferContextualPing(_pingAnchorWorldPos);
 
                     _holdingPingKey = false;
-                    HideWheel();
+                    CoopInputGuard.IsPingKeyHolding = false;
+                    HideWheel(absorbRelease: true);
                     FireLocalPing(_pingAnchorWorldPos, chosen);
                 }
             }
+        }
+
+        private static Vector2 ClampWheelAnchorToCanvas(Vector2 rawLocal)
+        {
+            Vector2 canvasSz = NativeStyleProvider.GetCanvasSize();
+            float halfW = canvasSz.x * 0.5f;
+            float halfH = canvasSz.y * 0.5f;
+            const float padX = 186f;
+            const float padY = 148f;
+            return new Vector2(
+                Mathf.Clamp(rawLocal.x, -halfW + padX, halfW - padX),
+                Mathf.Clamp(rawLocal.y, -halfH + padY, halfH - padY));
         }
 
         private void TryQuickHotkeyPing(PingKind kind)
@@ -218,14 +260,22 @@ namespace EmberwardCoop.Presence
             if (!_wheelVisible)
             {
                 _wheelVisible = true;
+                _openAnimProgress = 0f;
                 CoopInputGuard.IsPingWheelOpen = true;
-                _wheelRoot.SetActive(true);
-                _wheelRect.position = _pingAnchorScreenPos;
+                _wheelOverlayRoot.SetActive(true);
+                _wheelCenterRect.anchoredPosition = _pingAnchorCanvasPos;
+                RefreshWheelSprites();
                 RefreshLocalizedWheelLabels();
+                NativeStyleProvider.PlayUiOpenSound(true);
             }
 
-            Vector2 delta = (Vector2)(Input.mousePosition - _pingAnchorScreenPos);
-            if (delta.sqrMagnitude > 225f)
+            NativeStyleProvider.TickOpenTransition(_wheelCenterRect, _wheelCenterGroup, ref _openAnimProgress, Time.unscaledDeltaTime, 0.10f);
+
+            Vector2 mouseCanvas = NativeStyleProvider.ScreenToCanvasLocal(Input.mousePosition);
+            Vector2 delta = mouseCanvas - _pingAnchorCanvasPos;
+            int prev = _highlightedSlice;
+
+            if (delta.sqrMagnitude > 324f) // 18px deadzone
             {
                 float angle = Mathf.Atan2(delta.x, delta.y) * Mathf.Rad2Deg;
                 if (angle < 0f) angle += 360f;
@@ -233,32 +283,55 @@ namespace EmberwardCoop.Presence
                 _highlightedSlice = Math.Clamp(idx, 0, WheelSlices.Length - 1);
             }
 
+            if (_highlightedSlice != prev)
+                NativeStyleProvider.PlayUiHoverSound(1.10f + _highlightedSlice * 0.03f);
+
             for (int i = 0; i < WheelSlices.Length; i++)
             {
                 bool active = i == _highlightedSlice;
+                Color accent = WheelSlices[i].accent;
                 if (_sliceBgs[i] != null)
                 {
-                    Color accent = WheelSlices[i].accent;
                     _sliceBgs[i].color = active
-                        ? new Color(accent.r * 0.55f, accent.g * 0.55f, accent.b * 0.55f, 0.96f)
-                        : new Color(0.10f, 0.09f, 0.14f, 0.88f);
+                        ? new Color(accent.r * 0.48f + 0.14f, accent.g * 0.48f + 0.12f, accent.b * 0.48f + 0.10f, 0.98f)
+                        : NativeStyleProvider.PanelSubBg;
                 }
+                if (_sliceRects[i] != null)
+                    _sliceRects[i].localScale = active ? new Vector3(1.08f, 1.08f, 1f) : Vector3.one;
                 if (_sliceLabels[i] != null)
-                    _sliceLabels[i].color = active ? Color.white : WheelSlices[i].accent;
+                    _sliceLabels[i].color = active ? Color.white : accent;
             }
         }
 
-        private void HideWheel()
+        private void HideWheel(bool absorbRelease = true)
         {
+            bool wasVis = _wheelVisible;
             _wheelVisible = false;
             CoopInputGuard.IsPingWheelOpen = false;
-            if (_wheelRoot != null && _wheelRoot.activeSelf)
-                _wheelRoot.SetActive(false);
+            if (wasVis && absorbRelease)
+                CoopInputGuard.NotifyWheelClosed(waitForMouseUp: true);
+            if (_wheelOverlayRoot != null && _wheelOverlayRoot.activeSelf)
+                _wheelOverlayRoot.SetActive(false);
+        }
+
+        private void RefreshWheelSprites()
+        {
+            if (_wheelOverlayRoot == null) return;
+            NativeAssetRegistry.EnsureScanned();
+            for (int i = 0; i < WheelSlices.Length; i++)
+            {
+                if (_sliceIcons[i] != null)
+                {
+                    _sliceIcons[i].sprite = NativeAssetRegistry.GetPingIconSprite(WheelSlices[i].kind);
+                    _sliceIcons[i].preserveAspect = true;
+                }
+            }
         }
 
         private void RefreshLocalizedWheelLabels()
         {
-            if (_wheelRoot == null) return;
+            if (_wheelOverlayRoot == null) return;
+            if (_centerLabel != null) _centerLabel.text = CoopLoc.T("ping.center_label");
             for (int i = 0; i < WheelSlices.Length; i++)
                 if (_sliceLabels[i] != null)
                     _sliceLabels[i].text = CoopLoc.T(WheelSlices[i].locKey);
@@ -266,44 +339,68 @@ namespace EmberwardCoop.Presence
 
         private void EnsureWheelBuilt()
         {
-            if (_wheelRoot != null) return;
+            if (_wheelOverlayRoot != null) return;
+            NativeStyleProvider.HarvestFromScene();
             var canvas = NativeStyleProvider.GetOrCreateOverlayCanvas();
 
-            _wheelRoot = new GameObject("EWCoop_PingWheel");
-            _wheelRoot.transform.SetParent(canvas.transform, false);
-            _wheelRect = _wheelRoot.AddComponent<RectTransform>();
-            _wheelRect.sizeDelta = new Vector2(280f, 280f);
+            // Full-screen raycast-blocking overlay consumes hover & click events so world objects never react beneath
+            _wheelOverlayRoot = new GameObject("EWCoop_PingWheelOverlay");
+            _wheelOverlayRoot.transform.SetParent(canvas.transform, false);
+            NativeStyleProvider.StretchFill(_wheelOverlayRoot.AddComponent<RectTransform>());
+            var blocker = _wheelOverlayRoot.AddComponent<Image>();
+            blocker.color = new Color(0.11f, 0.08f, 0.06f, 0.16f);
+            blocker.raycastTarget = true;
 
-            var cg = _wheelRoot.AddComponent<CanvasGroup>();
-            cg.blocksRaycasts = false;
-            cg.interactable = false;
+            var centerHolder = new GameObject("PingWheelCenter");
+            centerHolder.transform.SetParent(_wheelOverlayRoot.transform, false);
+            _wheelCenterRect = centerHolder.AddComponent<RectTransform>();
+            _wheelCenterRect.anchorMin = new Vector2(0.5f, 0.5f);
+            _wheelCenterRect.anchorMax = new Vector2(0.5f, 0.5f);
+            _wheelCenterRect.sizeDelta = new Vector2(240f, 240f);
+            _wheelCenterGroup = centerHolder.AddComponent<CanvasGroup>();
+            _wheelCenterGroup.blocksRaycasts = false;
 
-            var center = NativeStyleProvider.CreatePanel(_wheelRoot.transform, "Center", new Color(0.08f, 0.07f, 0.11f, 0.92f), addBorder: true);
-            var crt = center.GetComponent<RectTransform>();
-            crt.sizeDelta = new Vector2(88f, 30f);
-            var cLbl = NativeStyleProvider.CreateLabel(center.transform, "PING", 13f, NativeStyleProvider.EmberGold, TextAlignmentOptions.Center, FontStyles.Bold);
-            NativeStyleProvider.StretchFill(cLbl.rectTransform);
+            var center = NativeStyleProvider.CreatePanel(centerHolder.transform, "CenterHub", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
+            center.GetComponent<RectTransform>().sizeDelta = new Vector2(76f, 28f);
+            _centerLabel = NativeStyleProvider.CreateLabel(center.transform, CoopLoc.T("ping.center_label"), 11.5f, NativeStyleProvider.EmberGold, TextAlignmentOptions.Center, FontStyles.Bold, autoSize: true, minFontSize: 9f, addShadow: true);
+            NativeStyleProvider.StretchFill(_centerLabel.rectTransform, 6f, 2f);
 
-            const float radius = 118f;
             for (int i = 0; i < WheelSlices.Length; i++)
             {
                 float rad = (i * 72f) * Mathf.Deg2Rad;
-                Vector2 pos = new Vector2(Mathf.Sin(rad) * radius, Mathf.Cos(rad) * radius);
+                Vector2 pos = new Vector2(Mathf.Sin(rad) * WheelRadius, Mathf.Cos(rad) * WheelRadius);
 
-                var pill = NativeStyleProvider.CreatePanel(_wheelRoot.transform, $"Slice_{i}", NativeStyleProvider.PanelBg, addBorder: true);
+                var pill = NativeStyleProvider.CreatePanel(centerHolder.transform, $"Slice_{i}", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
                 var prt = pill.GetComponent<RectTransform>();
                 prt.anchoredPosition = pos;
-                prt.sizeDelta = new Vector2(154f, 34f);
+                prt.sizeDelta = new Vector2(162f, 34f);
+                _sliceRects[i] = prt;
 
                 _sliceBgs[i] = pill.GetComponent<Image>();
-                var outl = pill.GetComponent<Outline>();
-                if (outl != null) outl.effectColor = WheelSlices[i].accent;
 
-                var lbl = NativeStyleProvider.CreateLabel(pill.transform, CoopLoc.T(WheelSlices[i].locKey), 12f, WheelSlices[i].accent, TextAlignmentOptions.Center, FontStyles.Bold);
-                NativeStyleProvider.StretchFill(lbl.rectTransform, 4f, 2f);
+                var hlg = pill.AddComponent<HorizontalLayoutGroup>();
+                hlg.padding = new RectOffset(7, 8, 4, 4);
+                hlg.spacing = 6f;
+                hlg.childAlignment = TextAnchor.MiddleLeft;
+                hlg.childControlWidth = true;
+                hlg.childControlHeight = true;
+                hlg.childForceExpandWidth = false;
+
+                var icGo = new GameObject("PingIcon");
+                icGo.transform.SetParent(pill.transform, false);
+                var icLe = icGo.AddComponent<LayoutElement>();
+                icLe.minWidth = 20f; icLe.preferredWidth = 20f; icLe.minHeight = 20f; icLe.preferredHeight = 20f;
+                var icImg = icGo.AddComponent<Image>();
+                icImg.sprite = NativeAssetRegistry.GetPingIconSprite(WheelSlices[i].kind);
+                icImg.preserveAspect = true;
+                icImg.raycastTarget = false;
+                _sliceIcons[i] = icImg;
+
+                var lbl = NativeStyleProvider.CreateLabel(pill.transform, CoopLoc.T(WheelSlices[i].locKey), 11.5f, WheelSlices[i].accent, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, autoSize: true, minFontSize: 8.5f, addShadow: true);
+                lbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
                 _sliceLabels[i] = lbl;
             }
-            _wheelRoot.SetActive(false);
+            _wheelOverlayRoot.SetActive(false);
         }
 
         public void HandlePingPacket(int senderId, BinaryReader r)
@@ -337,7 +434,7 @@ namespace EmberwardCoop.Presence
                 : Color.Lerp(playerCol, accent, 0.35f);
 
             string callout = $"{_net.GetPlayerName(playerId)}: {GetPingLocalizedLabel(kind)}";
-            CreateEffect(pos, col, callout, duration: 3.2f, isPing: true);
+            CreateEffect(pos, col, callout, duration: 3.2f, isPing: true, pingKind: kind, actorPlayerId: playerId);
             PlayCueSound(isPing: true, isUpgrade: kind == PingKind.NeedGold || kind == PingKind.NiceTower);
         }
 
@@ -346,56 +443,41 @@ namespace EmberwardCoop.Presence
             if (!CoopConfig.EnableSpatialFeedback.Value) return;
             Color col = CoopConfig.GetPlayerColor(_net.GetPlayerColorIndex(playerId));
             string label = $"{_net.GetPlayerName(playerId)} · {actionTag}";
-            CreateEffect(pos, col, label, duration: 1.55f, isPing: false);
+            CreateEffect(pos, col, label, duration: 1.55f, isPing: false, pingKind: null, actorPlayerId: playerId);
             PlayCueSound(isPing: false, isUpgrade: isUpgrade);
         }
 
-        private void CreateEffect(Vector3 pos, Color color, string labelText, float duration, bool isPing)
+        private void CreateEffect(Vector3 pos, Color color, string labelText, float duration, bool isPing, PingKind? pingKind, int actorPlayerId)
         {
             try
             {
-                var shader = Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
-                var ring = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                ring.name = "EWCoop_PulseRing";
-                ring.layer = 2;
-                var col = ring.GetComponent<Collider>();
-                if (col != null) UnityEngine.Object.Destroy(col);
-                ring.transform.position = new Vector3(pos.x, pos.y + 0.08f, pos.z);
-                ring.transform.localScale = new Vector3(0.4f, 0.02f, 0.4f);
+                NativeAssetRegistry.EnsureScanned();
 
-                Material mat = shader != null ? new Material(shader) : null;
-                if (mat != null)
-                {
-                    if (mat.HasProperty("_Surface")) mat.SetFloat("_Surface", 1f);
-                    if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                    if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                    if (mat.HasProperty("_ZWrite")) mat.SetInt("_ZWrite", 0);
-                    mat.renderQueue = 3150;
-                    SetMatColor(mat, new Color(color.r, color.g, color.b, 0.80f));
-                    var rdr = ring.GetComponent<Renderer>();
-                    if (rdr != null)
-                    {
-                        rdr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                        rdr.sharedMaterial = mat;
-                    }
-                }
+                // Native Emberward ground rune/ring sprite decal (zero primitive Unity cylinders!)
+                var ring = new GameObject("EWCoop_PulseRing");
+                ring.layer = 2;
+                ring.transform.position = new Vector3(pos.x, pos.y + 0.08f, pos.z);
+                ring.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+                var ringSr = ring.AddComponent<SpriteRenderer>();
+                ringSr.sprite = NativeAssetRegistry.GetPingRingSprite();
+                ringSr.color = new Color(color.r, color.g, color.b, 0.88f);
+                ringSr.sortingOrder = 25;
+                float ringNorm = NormalizeSpriteUnitScale(ringSr.sprite, 0.55f);
+                ring.transform.localScale = Vector3.one * ringNorm;
 
                 GameObject beacon = null;
+                SpriteRenderer beaconSr = null;
                 if (isPing)
                 {
-                    beacon = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-                    beacon.name = "EWCoop_PingBeacon";
+                    beacon = new GameObject("EWCoop_PingBeacon");
                     beacon.layer = 2;
-                    var bcol = beacon.GetComponent<Collider>();
-                    if (bcol != null) UnityEngine.Object.Destroy(bcol);
-                    beacon.transform.position = new Vector3(pos.x, pos.y + 2.2f, pos.z);
-                    beacon.transform.localScale = new Vector3(0.11f, 2.2f, 0.11f);
-                    var br = beacon.GetComponent<Renderer>();
-                    if (br != null && mat != null)
-                    {
-                        br.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                        br.sharedMaterial = mat;
-                    }
+                    beacon.transform.position = new Vector3(pos.x, pos.y + 1.55f, pos.z);
+                    beaconSr = beacon.AddComponent<SpriteRenderer>();
+                    beaconSr.sprite = NativeAssetRegistry.GetPingBeaconSprite();
+                    beaconSr.color = new Color(color.r, color.g, color.b, 0.72f);
+                    beaconSr.sortingOrder = 26;
+                    float bNorm = NormalizeSpriteUnitScale(beaconSr.sprite, 1.0f);
+                    beacon.transform.localScale = new Vector3(bNorm * 0.42f, bNorm * 2.8f, 1f);
                 }
 
                 SpawnBurstParticles(pos, color, isPing ? 16 : 10);
@@ -407,46 +489,56 @@ namespace EmberwardCoop.Presence
                 var canvasRoot = NativeStyleProvider.GetOrCreateOverlayCanvas();
                 if (canvasRoot != null)
                 {
-                    lblObj = new GameObject("EWCoop_FloatingTag");
-                    lblObj.transform.SetParent(canvasRoot.transform, false);
-                    lblRect = lblObj.AddComponent<RectTransform>();
-                    lblRect.sizeDelta = new Vector2(235f, 30f);
+                    lblObj = NativeStyleProvider.CreatePanel(canvasRoot.transform, "EWCoop_FloatingTag", NativeStyleProvider.TooltipBg, addBorder: true, isSubPanel: true);
+                    lblRect = lblObj.GetComponent<RectTransform>();
+                    lblRect.anchorMin = new Vector2(0.5f, 0.5f);
+                    lblRect.anchorMax = new Vector2(0.5f, 0.5f);
                     lblGroup = lblObj.AddComponent<CanvasGroup>();
                     lblGroup.blocksRaycasts = false;
                     lblGroup.interactable = false;
 
-                    var bg = lblObj.AddComponent<Image>();
-                    bg.color = new Color(0.08f, 0.07f, 0.11f, 0.86f);
-                    bg.raycastTarget = false;
+                    var hlg = lblObj.AddComponent<HorizontalLayoutGroup>();
+                    hlg.padding = new RectOffset(11, 12, 7, 7);
+                    hlg.spacing = 5f;
+                    hlg.childAlignment = TextAnchor.MiddleLeft;
+                    hlg.childControlWidth = true;
+                    hlg.childControlHeight = true;
+                    hlg.childForceExpandWidth = false;
+                    var fit = lblObj.AddComponent<ContentSizeFitter>();
+                    fit.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+                    fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-                    var outline = lblObj.AddComponent<Outline>();
-                    outline.effectColor = new Color(color.r, color.g, color.b, 0.95f);
-                    outline.effectDistance = new Vector2(1.5f, -1.5f);
+                    if (pingKind.HasValue)
+                    {
+                        var icGo = new GameObject("PingIcon");
+                        icGo.transform.SetParent(lblObj.transform, false);
+                        var ile = icGo.AddComponent<LayoutElement>();
+                        ile.minWidth = 18f; ile.preferredWidth = 18f; ile.minHeight = 18f; ile.preferredHeight = 18f;
+                        var iImg = icGo.AddComponent<Image>();
+                        iImg.sprite = NativeAssetRegistry.GetPingIconSprite(pingKind.Value);
+                        iImg.preserveAspect = true;
+                        iImg.raycastTarget = false;
+                    }
+                    else
+                    {
+                        Color pCol = CoopConfig.GetPlayerColor(_net.GetPlayerColorIndex(actorPlayerId));
+                        NativeStyleProvider.CreateHeroAvatarWidget(lblObj.transform, _net.GetPlayerAvatarHeroId(actorPlayerId), pCol, 18f, clickable: false);
+                    }
 
-                    var txtObj = new GameObject("Text");
-                    txtObj.transform.SetParent(lblObj.transform, false);
-                    var txtRect = txtObj.AddComponent<RectTransform>();
-                    NativeStyleProvider.StretchFill(txtRect, 6f, 2f);
-
-                    tmp = txtObj.AddComponent<TextMeshProUGUI>();
-                    if (NativeStyleProvider.PrimaryFont != null) tmp.font = NativeStyleProvider.PrimaryFont;
-                    tmp.text = labelText;
-                    tmp.fontSize = 13f;
-                    tmp.fontStyle = FontStyles.Bold;
-                    tmp.alignment = TextAlignmentOptions.Center;
-                    tmp.color = color;
-                    tmp.raycastTarget = false;
+                    tmp = NativeStyleProvider.CreateLabel(lblObj.transform, labelText, 12f, color, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true);
                 }
 
                 _effects.Add(new ActiveEffect
                 {
                     RingObj = ring,
+                    RingRenderer = ringSr,
                     BeaconObj = beacon,
+                    BeaconRenderer = beaconSr,
                     LabelObj = lblObj,
                     LabelRect = lblRect,
                     LabelGroup = lblGroup,
                     LabelText = tmp,
-                    RingMat = mat,
+                    BaseColor = color,
                     WorldPos = pos,
                     BaseLabel = labelText,
                     Age = 0f,
@@ -458,6 +550,15 @@ namespace EmberwardCoop.Presence
             {
                 CoopLogger.Debug(LogCategory.Presence, $"CreateEffect warning: {ex.Message}");
             }
+        }
+
+        private static float NormalizeSpriteUnitScale(Sprite sp, float desiredWorldUnits)
+        {
+            if (sp == null) return desiredWorldUnits;
+            float w = sp.bounds.size.x;
+            float h = sp.bounds.size.y;
+            float maxDim = Mathf.Max(w, h);
+            return maxDim > 0.001f ? desiredWorldUnits / maxDim : desiredWorldUnits;
         }
 
         private static void SpawnBurstParticles(Vector3 pos, Color color, int count)
@@ -508,8 +609,10 @@ namespace EmberwardCoop.Presence
         public void Tick(float dt)
         {
             var cam = Camera.main;
-            float padX = 125f;
-            float padY = 40f;
+            Vector2 canvasSz = NativeStyleProvider.GetCanvasSize();
+            float halfW = canvasSz.x * 0.5f;
+            float halfH = canvasSz.y * 0.5f;
+            bool hasTowerPanel = GameRefs.TryGetActiveTowerInspectionScreenRect(out Rect towerRect);
 
             for (int i = _effects.Count - 1; i >= 0; i--)
             {
@@ -525,21 +628,28 @@ namespace EmberwardCoop.Presence
                 }
 
                 float alpha = (1f - t) * (1f - t);
-                if (e.RingObj != null)
+                if (e.RingObj != null && e.RingRenderer != null)
                 {
-                    float scale = e.IsPing ? Mathf.Lerp(0.45f, 2.45f, t) : Mathf.Lerp(0.5f, 1.65f, t);
-                    e.RingObj.transform.localScale = new Vector3(scale, 0.02f, scale);
+                    float targetUnits = e.IsPing ? Mathf.Lerp(0.55f, 2.55f, t) : Mathf.Lerp(0.50f, 1.65f, t);
+                    float s = NormalizeSpriteUnitScale(e.RingRenderer.sprite, targetUnits);
+                    e.RingObj.transform.localScale = new Vector3(s, s, 1f);
+                    e.RingObj.transform.Rotate(0f, 0f, (e.IsPing ? 55f : 30f) * dt, Space.Self);
+                    e.RingRenderer.color = new Color(e.BaseColor.r, e.BaseColor.g, e.BaseColor.b, alpha * 0.92f);
                 }
-                if (e.BeaconObj != null)
+                if (e.BeaconObj != null && e.BeaconRenderer != null)
                 {
-                    float bScale = Mathf.Lerp(0.14f, 0.02f, t);
-                    e.BeaconObj.transform.localScale = new Vector3(bScale, Mathf.Lerp(2.4f, 3.2f, t), bScale);
-                }
-                if (e.RingMat != null)
-                {
-                    Color c = e.RingMat.HasProperty("_BaseColor") ? e.RingMat.GetColor("_BaseColor") : e.RingMat.color;
-                    c.a = alpha * 0.85f;
-                    SetMatColor(e.RingMat, c);
+                    float bNorm = NormalizeSpriteUnitScale(e.BeaconRenderer.sprite, 1.0f);
+                    float bw = Mathf.Lerp(0.46f, 0.12f, t);
+                    float bh = Mathf.Lerp(2.5f, 3.3f, t);
+                    e.BeaconObj.transform.localScale = new Vector3(bNorm * bw, bNorm * bh, 1f);
+                    if (cam != null)
+                    {
+                        Vector3 toCam = cam.transform.position - e.BeaconObj.transform.position;
+                        toCam.y = 0f;
+                        if (toCam.sqrMagnitude > 0.001f)
+                            e.BeaconObj.transform.rotation = Quaternion.LookRotation(-toCam.normalized, Vector3.up);
+                    }
+                    e.BeaconRenderer.color = new Color(e.BaseColor.r, e.BaseColor.g, e.BaseColor.b, alpha * 0.78f);
                 }
 
                 if (e.LabelRect != null && cam != null)
@@ -548,11 +658,14 @@ namespace EmberwardCoop.Presence
                     Vector3 sp = cam.WorldToScreenPoint(e.WorldPos + new Vector3(0f, rise, 0f));
                     bool inFront = sp.z > 0f;
                     bool onScreen = inFront && sp.x >= 0f && sp.x <= Screen.width && sp.y >= 0f && sp.y <= Screen.height;
+                    float labelAlpha = Mathf.Clamp01(1f - Mathf.Max(0f, (t - 0.62f) / 0.38f));
 
                     if (onScreen)
                     {
                         if (!e.LabelObj.activeSelf) e.LabelObj.SetActive(true);
-                        e.LabelRect.position = new Vector3(sp.x, sp.y, 0f);
+                        if (hasTowerPanel && towerRect.Contains(new Vector2(sp.x, sp.y)))
+                            labelAlpha *= 0.20f;
+                        e.LabelRect.anchoredPosition = NativeStyleProvider.ScreenToCanvasLocal(new Vector2(sp.x, sp.y));
                         if (e.LabelText != null) e.LabelText.text = e.BaseLabel;
                     }
                     else if (e.IsPing)
@@ -563,13 +676,15 @@ namespace EmberwardCoop.Presence
                             sp.x = Screen.width - sp.x;
                             sp.y = Screen.height - sp.y;
                         }
-                        Vector2 dir = new Vector2(sp.x - Screen.width * 0.5f, sp.y - Screen.height * 0.5f).normalized;
-                        float cx = Mathf.Clamp(sp.x, padX, Screen.width - padX);
-                        float cy = Mathf.Clamp(sp.y, padY, Screen.height - padY);
-                        e.LabelRect.position = new Vector3(cx, cy, 0f);
+                        Vector2 local = NativeStyleProvider.ScreenToCanvasLocal(new Vector2(sp.x, sp.y));
+                        Vector2 dir = local.normalized;
+                        // Keep off-screen ping pointers away from vanilla top/bottom bars
+                        float cx = Mathf.Clamp(local.x, -halfW + 150f, halfW - 150f);
+                        float cy = Mathf.Clamp(local.y, -halfH + 135f, halfH - 135f);
+                        e.LabelRect.anchoredPosition = new Vector2(cx, cy);
                         string arrow = Math.Abs(dir.x) > Math.Abs(dir.y)
-                            ? (dir.x > 0f ? "->" : "<-")
-                            : (dir.y > 0f ? "^" : "v");
+                            ? (dir.x > 0f ? "→" : "←")
+                            : (dir.y > 0f ? "↑" : "↓");
                         if (e.LabelText != null) e.LabelText.text = $"{arrow} {e.BaseLabel}";
                     }
                     else
@@ -578,15 +693,9 @@ namespace EmberwardCoop.Presence
                     }
 
                     if (e.LabelGroup != null)
-                        e.LabelGroup.alpha = Mathf.Clamp01(1f - Mathf.Max(0f, (t - 0.62f) / 0.38f));
+                        e.LabelGroup.alpha = labelAlpha;
                 }
             }
-        }
-
-        private static void SetMatColor(Material mat, Color c)
-        {
-            if (mat.HasProperty("_BaseColor")) mat.SetColor("_BaseColor", c);
-            if (mat.HasProperty("_Color")) mat.SetColor("_Color", c);
         }
 
         private static void DestroyEffect(ActiveEffect e)
@@ -594,13 +703,11 @@ namespace EmberwardCoop.Presence
             if (e.RingObj != null) UnityEngine.Object.Destroy(e.RingObj);
             if (e.BeaconObj != null) UnityEngine.Object.Destroy(e.BeaconObj);
             if (e.LabelObj != null) UnityEngine.Object.Destroy(e.LabelObj);
-            if (e.RingMat != null) UnityEngine.Object.Destroy(e.RingMat);
         }
 
         public void ClearAll()
         {
-            _holdingPingKey = false;
-            HideWheel();
+            CancelAndCloseWheel(absorbRelease: false);
             for (int i = 0; i < _effects.Count; i++) DestroyEffect(_effects[i]);
             _effects.Clear();
         }

@@ -491,7 +491,7 @@ namespace EmberwardCoop.Sync
             {
                 IsDesyncWarningActive = true;
                 _consecutiveHashMismatches = 0;
-                CoopLogger.Warn(LogCategory.Hash, $"State drift detected (T:{lTowers}->{hTowers}, B:{lTetris}->{hTetris}, G:{lCoin}->{hCoin}) — auto-reconciling!", addToFeed: false);
+                CoopLogger.Warn(LogCategory.Hash, $"State drift detected (T:{lTowers}->{hTowers}, B:{lTetris}->{hTetris}, G:{lCoin}->{hCoin}) — auto-reconciling!");
                 _net.SendToHost(PacketType.CmdDesyncReport, w =>
                 {
                     w.Write(localHash);

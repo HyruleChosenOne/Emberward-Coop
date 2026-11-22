@@ -13,6 +13,10 @@ namespace EmberwardCoop.UI
         private readonly SessionController _session;
 
         private GameObject _root;
+        private RectTransform _cardRt;
+        private CanvasGroup _cardCg;
+        private float _openAnimProgress = 1f;
+
         private TMP_Text _titleText;
         private TMP_Text _waitingText;
         private TMP_Text _hintText;
@@ -45,11 +49,13 @@ namespace EmberwardCoop.UI
             _disconnectedName = string.IsNullOrWhiteSpace(playerName) ? "Teammate" : playerName;
             _disconnectedAtTime = Time.unscaledTime;
             _isOpen = true;
+            _openAnimProgress = 0f;
             _root.SetActive(true);
             RefreshLocalizedTexts();
+            NativeStyleProvider.PlayUiOpenSound(true);
 
             PauseCombat(true);
-            CoopLogger.Info(LogCategory.Sync, $"Auto-paused combat because {_disconnectedName} disconnected mid-wave.", addToFeed: true);
+            CoopLogger.Info(LogCategory.Sync, $"Auto-paused combat because {_disconnectedName} disconnected mid-wave.");
         }
 
         public void OnPeerReconnected(string playerName)
@@ -72,6 +78,8 @@ namespace EmberwardCoop.UI
         public void Tick(float now)
         {
             if (!_isOpen) return;
+
+            NativeStyleProvider.TickOpenTransition(_cardRt, _cardCg, ref _openAnimProgress, Time.unscaledDeltaTime, 0.13f);
 
             if (!GameRefs.IsInBattle)
             {
@@ -110,43 +118,46 @@ namespace EmberwardCoop.UI
             _root = new GameObject("EWCoop_DisconnectModal");
             _root.transform.SetParent(canvas.transform, false);
             NativeStyleProvider.StretchFill(_root.AddComponent<RectTransform>());
-            _root.AddComponent<Image>().color = new Color(0.02f, 0.02f, 0.04f, 0.72f);
+            _root.AddComponent<Image>().color = EmberwardTheme.ModalScrim;
 
             var card = NativeStyleProvider.CreatePanel(_root.transform, "Card", NativeStyleProvider.PanelBg, addBorder: true);
-            var rt = card.GetComponent<RectTransform>();
-            rt.anchorMin = new Vector2(0.5f, 0.5f);
-            rt.anchorMax = new Vector2(0.5f, 0.5f);
-            rt.sizeDelta = new Vector2(520f, 230f);
+            _cardRt = card.GetComponent<RectTransform>();
+            _cardRt.anchorMin = new Vector2(0.5f, 0.5f);
+            _cardRt.anchorMax = new Vector2(0.5f, 0.5f);
+            _cardRt.sizeDelta = new Vector2(460f, 195f);
+            _cardCg = card.AddComponent<CanvasGroup>();
+
+            var fit = card.AddComponent<ContentSizeFitter>();
+            fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var vlg = card.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(24, 24, 20, 20);
-            vlg.spacing = 12f;
+            vlg.padding = new RectOffset(20, 20, 18, 18);
+            vlg.spacing = 10f;
             vlg.childControlWidth = true;
             vlg.childControlHeight = true;
             vlg.childForceExpandWidth = true;
             vlg.childForceExpandHeight = false;
 
-            _titleText = NativeStyleProvider.CreateLabel(card.transform, CoopLoc.T("disconnect.title"), 22f, NativeStyleProvider.EmberOrange, TextAlignmentOptions.Center, FontStyles.Bold);
-            _waitingText = NativeStyleProvider.CreateLabel(card.transform, "", 16f, NativeStyleProvider.TextLight, TextAlignmentOptions.Center, FontStyles.Bold);
-            _hintText = NativeStyleProvider.CreateLabel(card.transform, CoopLoc.T("disconnect.hint"), 13.5f, NativeStyleProvider.TextMuted, TextAlignmentOptions.Center);
-            _hintText.enableWordWrapping = true;
+            _titleText = NativeStyleProvider.CreateLabel(card.transform, CoopLoc.T("disconnect.title"), 19f, NativeStyleProvider.EmberOrange, TextAlignmentOptions.Center, FontStyles.Bold, autoSize: true, minFontSize: 14f, addShadow: true);
+            _waitingText = NativeStyleProvider.CreateLabel(card.transform, "", 14.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.Center, FontStyles.Bold, wordWrap: true);
+            _hintText = NativeStyleProvider.CreateLabel(card.transform, CoopLoc.T("disconnect.hint"), 12.5f, NativeStyleProvider.TextMuted, TextAlignmentOptions.Center, wordWrap: true);
 
             var btnRow = new GameObject("Buttons");
             btnRow.transform.SetParent(card.transform, false);
             var hlg = btnRow.AddComponent<HorizontalLayoutGroup>();
-            hlg.spacing = 12f;
+            hlg.spacing = 10f;
             hlg.childControlWidth = true;
             hlg.childControlHeight = true;
             hlg.childForceExpandWidth = true;
-            btnRow.AddComponent<LayoutElement>().minHeight = 42f;
+            btnRow.AddComponent<LayoutElement>().minHeight = 36f;
 
             var waitBtn = NativeStyleProvider.CreateButton(btnRow.transform, CoopLoc.T("disconnect.wait_btn"), NativeStyleProvider.ButtonSecondary, () =>
             {
                 NativeStyleProvider.PlayUiClickSound(1.0f);
-            }, 14f, 40f);
+            }, 13f, 36f);
             _waitBtnText = waitBtn.GetComponentInChildren<TMP_Text>();
 
-            var contBtn = NativeStyleProvider.CreateButton(btnRow.transform, CoopLoc.T("disconnect.continue_btn"), NativeStyleProvider.ButtonPrimary, DismissAndResume, 14f, 40f);
+            var contBtn = NativeStyleProvider.CreateButton(btnRow.transform, CoopLoc.T("disconnect.continue_btn"), NativeStyleProvider.ButtonPrimary, DismissAndResume, 13f, 36f);
             _continueBtnText = contBtn.GetComponentInChildren<TMP_Text>();
 
             _root.SetActive(false);

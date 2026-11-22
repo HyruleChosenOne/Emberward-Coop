@@ -98,7 +98,7 @@ namespace EmberwardCoop.Sync
                 if (gdm != null && !gdm.doUseTempSessionData)
                 {
                     gdm.SwitchSession(true);
-                    CoopLogger.Info(LogCategory.Sync, "Switched Client to protected co-op session (solo run untouched).", addToFeed: true);
+                    CoopLogger.Info(LogCategory.Sync, "Switched Client to protected co-op session (solo run untouched).");
                 }
             }
             else if (!isClient && _wasClientConnected)
@@ -699,7 +699,7 @@ namespace EmberwardCoop.Sync
             {
                 try
                 {
-                    CoopLogger.Info(LogCategory.Sync, $"Following Host -> {targetScene} (Seed {PendingStageSeed})", addToFeed: true);
+                    CoopLogger.Info(LogCategory.Sync, $"Following Host -> {targetScene} (Seed {PendingStageSeed})");
                     RefiUtilities.SceneLoader.Load(targetScene);
                 }
                 catch (Exception ex)
@@ -762,7 +762,7 @@ namespace EmberwardCoop.Sync
             int nodeIdx = r.ReadInt32();
             MapNodeVotes[senderId] = nodeIdx;
             string pName = _net.GetPlayerName(senderId);
-            CoopLogger.Info(LogCategory.Sync, $"{pName} voted for Map Node #{nodeIdx}.", addToFeed: true);
+            CoopLogger.Info(LogCategory.Sync, $"{pName} voted for Map Node #{nodeIdx}.");
             GameRefs.ShowGameToast($"{pName} suggests Map Node #{nodeIdx}", 2.5f);
             BroadcastMapVotes();
         }
@@ -813,7 +813,7 @@ namespace EmberwardCoop.Sync
             if (!isCombatNode) return;
 
             string pName = _net.GetPlayerName(senderId);
-            CoopLogger.Info(LogCategory.Sync, $"{pName} entered Map Node #{nodeIndex} ({st}).", addToFeed: true);
+            CoopLogger.Info(LogCategory.Sync, $"{pName} entered Map Node #{nodeIndex} ({st}).");
             HostSelectedMapNodeIndex = nodeIndex;
             MapNodeVotes.Clear();
             using (NetworkScope.Enter())

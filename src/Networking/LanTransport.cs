@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using EmberwardCoop.Core;
 
@@ -14,11 +15,30 @@ namespace EmberwardCoop.Networking
     public sealed class LanTransport : ITransport
     {
         public const int DiscoveryPort = 27778;
-        private const string DiscoveryMagic = "EWCOOP1|";
+        private const string DiscoveryHeader = LobbyMetadataKeys.LanDiscoveryMagic + "\n";
+        private const double StaleLobbySeconds = 5.5;
+
+        private sealed class DiscoveryBeaconPayload
+        {
+            public string magic { get; set; }
+            public string game_tag { get; set; }
+            public string mod_signature { get; set; }
+            public int protocol_version { get; set; }
+            public string mod_version { get; set; }
+            public string host_name { get; set; }
+            public int port { get; set; }
+            public string coop_mode { get; set; }
+            public int player_count { get; set; }
+            public int max_players { get; set; }
+            public string scene_name { get; set; }
+            public bool in_progress { get; set; }
+            public bool joinable_in_progress { get; set; }
+        }
 
         public TransportKind Kind => TransportKind.Lan;
         public SessionRole Role => _role;
         public bool IsAvailable => true;
+        public bool IsRefreshingLobbies => DateTime.UtcNow < _refreshIndicatorUntilUtc;
         public string StatusText { get; private set; } = "LAN Ready";
         public string LobbyCode { get; private set; } = "";
         public int LocalPingMs { get; private set; }
@@ -29,6 +49,7 @@ namespace EmberwardCoop.Networking
         public event Action OnConnectedToHost;
         public event Action<string> OnDisconnected;
         public event Action<string> OnError;
+        public event Action OnLobbyListUpdated;
 
         private sealed class TcpPeer
         {
@@ -82,8 +103,14 @@ namespace EmberwardCoop.Networking
         private string _advertisedScene = "CoinPage";
         private int _advertisedPlayers = 1;
         private int _advertisedMaxPlayers = 4;
+        private string _advertisedCoopMode = LobbyMetadataKeys.ModeShared;
+        private bool _advertisedInProgress;
+        private bool _advertisedJoinableInProgress;
+
         private DateTime _lastDiscoveryBroadcastUtc = DateTime.MinValue;
         private DateTime _lastPingSentUtc = DateTime.MinValue;
+        private DateTime _lastStalePruneUtc = DateTime.MinValue;
+        private DateTime _refreshIndicatorUntilUtc = DateTime.MinValue;
 
         public void StartDiscoveryListener()
         {
@@ -103,7 +130,7 @@ namespace EmberwardCoop.Networking
             }
         }
 
-        public bool StartHost(int port, string hostName, int maxPlayers)
+        public bool StartHost(int port, string hostName, int maxPlayers, string coopMode = LobbyMetadataKeys.ModeShared)
         {
             Shutdown();
             try
@@ -112,6 +139,10 @@ namespace EmberwardCoop.Networking
                 _hostName = string.IsNullOrWhiteSpace(hostName) ? "Host" : hostName.Trim();
                 _advertisedMaxPlayers = Math.Clamp(maxPlayers, 2, 6);
                 _advertisedPlayers = 1;
+                _advertisedCoopMode = LobbyMetadataKeys.IsValidCoopMode(coopMode) ? coopMode : LobbyMetadataKeys.ModeShared;
+                _advertisedScene = string.IsNullOrEmpty(GameRefs.ActiveScene) ? "CoinPage" : GameRefs.ActiveScene;
+                _advertisedInProgress = !GameRefs.IsInTitle;
+                _advertisedJoinableInProgress = false;
 
                 _tcpListener = new TcpListener(IPAddress.Any, port);
                 _tcpListener.Start();
@@ -134,7 +165,7 @@ namespace EmberwardCoop.Networking
                 StatusText = $"Hosting LAN ({LobbyCode})";
 
                 new Thread(AcceptLoop) { IsBackground = true, Name = "EWCoop_LanAccept" }.Start();
-                CoopLogger.Info(LogCategory.Net, $"LAN Host started on {LobbyCode}", addToFeed: true);
+                CoopLogger.Info(LogCategory.Net, $"LAN Host started on {LobbyCode}");
                 return true;
             }
             catch (Exception ex)
@@ -245,9 +276,17 @@ namespace EmberwardCoop.Networking
             }
 
             DateTime utcNow = DateTime.UtcNow;
+
+            if ((utcNow - _lastStalePruneUtc).TotalSeconds >= 1.5)
+            {
+                _lastStalePruneUtc = utcNow;
+                if (PruneStaleLobbies(utcNow))
+                    OnLobbyListUpdated?.Invoke();
+            }
+
             if (_role == SessionRole.Host)
             {
-                if ((utcNow - _lastDiscoveryBroadcastUtc).TotalSeconds >= 1.5)
+                if ((utcNow - _lastDiscoveryBroadcastUtc).TotalSeconds >= 1.4)
                 {
                     _lastDiscoveryBroadcastUtc = utcNow;
                     SendDiscoveryBeacon();
@@ -334,29 +373,49 @@ namespace EmberwardCoop.Networking
             peer.Enqueue(framed, mode == DeliveryMode.Unreliable);
         }
 
-        public void UpdateLobbyMetadata(string sceneName, int playerCount, int maxPlayers)
+        public void UpdateLobbyMetadata(string sceneName, int playerCount, int maxPlayers, string coopMode, bool inProgress, bool joinableInProgress = false)
         {
             _advertisedScene = string.IsNullOrEmpty(sceneName) ? "CoinPage" : sceneName;
             _advertisedPlayers = Math.Max(1, playerCount);
             _advertisedMaxPlayers = Math.Clamp(maxPlayers, 2, 6);
+            if (LobbyMetadataKeys.IsValidCoopMode(coopMode))
+                _advertisedCoopMode = coopMode;
+            _advertisedInProgress = inProgress;
+            _advertisedJoinableInProgress = joinableInProgress;
         }
 
         public void RefreshLobbyList()
         {
             StartDiscoveryListener();
-            DateTime cutoff = DateTime.UtcNow.AddSeconds(-8.0);
+            _refreshIndicatorUntilUtc = DateTime.UtcNow.AddSeconds(1.2);
+            lock (_discoveredLobbies)
+            {
+                _discoveredLobbies.Clear();
+            }
+            OnLobbyListUpdated?.Invoke();
+        }
+
+        private bool PruneStaleLobbies(DateTime utcNow)
+        {
+            DateTime cutoff = utcNow.AddSeconds(-StaleLobbySeconds);
+            bool removedAny = false;
             lock (_discoveredLobbies)
             {
                 var stale = new List<string>();
                 foreach (var kv in _discoveredLobbies)
                     if (kv.Value.LastSeenUtc < cutoff) stale.Add(kv.Key);
-                for (int i = 0; i < stale.Count; i++) _discoveredLobbies.Remove(stale[i]);
+                for (int i = 0; i < stale.Count; i++)
+                {
+                    _discoveredLobbies.Remove(stale[i]);
+                    removedAny = true;
+                }
             }
+            return removedAny;
         }
 
         public IReadOnlyList<LobbySummary> GetDiscoveredLobbies()
         {
-            DateTime cutoff = DateTime.UtcNow.AddSeconds(-8.0);
+            DateTime cutoff = DateTime.UtcNow.AddSeconds(-StaleLobbySeconds);
             var list = new List<LobbySummary>();
             lock (_discoveredLobbies)
             {
@@ -624,33 +683,83 @@ namespace EmberwardCoop.Networking
                 try
                 {
                     byte[] data = _discoveryListener.Receive(ref ep);
+                    if (data == null || data.Length <= DiscoveryHeader.Length || data.Length > 2048) continue;
+
                     string msg = Encoding.UTF8.GetString(data);
-                    if (!msg.StartsWith(DiscoveryMagic, StringComparison.Ordinal)) continue;
+                    if (!msg.StartsWith(DiscoveryHeader, StringComparison.Ordinal))
+                        continue;
 
-                    string[] parts = msg.Split('|');
-                    if (parts.Length < 6) continue;
-                    string hostName = parts[1];
-                    if (!int.TryParse(parts[2], out int port)) continue;
-                    string scene = parts[3];
-                    if (!int.TryParse(parts[4], out int pCount)) pCount = 1;
-                    if (!int.TryParse(parts[5], out int maxP)) maxP = 4;
+                    string json = msg.Substring(DiscoveryHeader.Length);
+                    DiscoveryBeaconPayload beacon;
+                    try
+                    {
+                        beacon = JsonSerializer.Deserialize<DiscoveryBeaconPayload>(json);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
 
-                    string key = $"{ep.Address}:{port}";
+                    if (beacon == null) continue;
+
+                    // Strict validation: magic header, game tag, mod signature, matching protocol_version, non-empty host, valid counts
+                    if (!string.Equals(beacon.magic, LobbyMetadataKeys.LanDiscoveryMagic, StringComparison.Ordinal)) continue;
+                    if (!string.Equals(beacon.game_tag, LobbyMetadataKeys.GameTagValue, StringComparison.Ordinal)) continue;
+                    if (!string.Equals(beacon.mod_signature, LobbyMetadataKeys.ModSignatureValue, StringComparison.Ordinal)) continue;
+                    if (beacon.protocol_version != PacketProtocol.ProtocolVersion) continue;
+                    if (string.IsNullOrWhiteSpace(beacon.host_name)) continue;
+                    if (beacon.port < 1 || beacon.port > 65535) continue;
+                    if (!LobbyMetadataKeys.IsValidCoopMode(beacon.coop_mode)) continue;
+                    if (beacon.max_players < 2 || beacon.max_players > 6) continue;
+
+                    string key = $"{ep.Address}:{beacon.port}";
+
+                    // Hide full or non-joinable in-progress runs immediately
+                    if (beacon.player_count < 1 || beacon.player_count >= beacon.max_players || (beacon.in_progress && !beacon.joinable_in_progress))
+                    {
+                        bool removed;
+                        lock (_discoveredLobbies) removed = _discoveredLobbies.Remove(key);
+                        if (removed) _mainThreadActions.Enqueue(() => OnLobbyListUpdated?.Invoke());
+                        continue;
+                    }
+
+                    var summary = new LobbySummary
+                    {
+                        Transport = TransportKind.Lan,
+                        LobbyKey = key,
+                        GameTag = beacon.game_tag,
+                        ModSignature = beacon.mod_signature,
+                        ProtocolVersion = beacon.protocol_version,
+                        ModVersion = string.IsNullOrWhiteSpace(beacon.mod_version) ? $"v{beacon.protocol_version}" : beacon.mod_version.Trim(),
+                        HostName = beacon.host_name.Trim(),
+                        CoopMode = beacon.coop_mode,
+                        AddressOrCode = key,
+                        Port = beacon.port,
+                        SceneName = string.IsNullOrWhiteSpace(beacon.scene_name) ? "CoinPage" : beacon.scene_name.Trim(),
+                        PlayerCount = beacon.player_count,
+                        MaxPlayers = beacon.max_players,
+                        InProgress = beacon.in_progress,
+                        JoinableInProgress = beacon.joinable_in_progress,
+                        PingMs = 1,
+                        LastSeenUtc = DateTime.UtcNow
+                    };
+
+                    bool isNewOrChanged = false;
                     lock (_discoveredLobbies)
                     {
-                        _discoveredLobbies[key] = new LobbySummary
+                        if (!_discoveredLobbies.TryGetValue(key, out var prev) ||
+                            prev.PlayerCount != summary.PlayerCount ||
+                            prev.MaxPlayers != summary.MaxPlayers ||
+                            prev.CoopMode != summary.CoopMode ||
+                            prev.HostName != summary.HostName)
                         {
-                            Transport = TransportKind.Lan,
-                            LobbyKey = key,
-                            HostName = hostName,
-                            AddressOrCode = key,
-                            Port = port,
-                            SceneName = scene,
-                            PlayerCount = pCount,
-                            MaxPlayers = maxP,
-                            LastSeenUtc = DateTime.UtcNow
-                        };
+                            isNewOrChanged = true;
+                        }
+                        _discoveredLobbies[key] = summary;
                     }
+
+                    if (isNewOrChanged)
+                        _mainThreadActions.Enqueue(() => OnLobbyListUpdated?.Invoke());
                 }
                 catch
                 {
@@ -662,9 +771,24 @@ namespace EmberwardCoop.Networking
 
         private void SendDiscoveryBeacon()
         {
-            string safeHost = (_hostName ?? "Host").Replace("|", "");
-            string safeScene = (_advertisedScene ?? "CoinPage").Replace("|", "");
-            string payload = $"{DiscoveryMagic}{safeHost}|{ListenPort}|{safeScene}|{_advertisedPlayers}|{_advertisedMaxPlayers}";
+            var beacon = new DiscoveryBeaconPayload
+            {
+                magic = LobbyMetadataKeys.LanDiscoveryMagic,
+                game_tag = LobbyMetadataKeys.GameTagValue,
+                mod_signature = LobbyMetadataKeys.ModSignatureValue,
+                protocol_version = PacketProtocol.ProtocolVersion,
+                mod_version = CoopPlugin.PluginVersion,
+                host_name = string.IsNullOrWhiteSpace(_hostName) ? "Host" : _hostName.Trim(),
+                port = ListenPort,
+                coop_mode = _advertisedCoopMode,
+                player_count = _advertisedPlayers,
+                max_players = _advertisedMaxPlayers,
+                scene_name = string.IsNullOrWhiteSpace(_advertisedScene) ? "CoinPage" : _advertisedScene,
+                in_progress = _advertisedInProgress,
+                joinable_in_progress = _advertisedJoinableInProgress
+            };
+
+            string payload = DiscoveryHeader + JsonSerializer.Serialize(beacon);
             ThreadPool.QueueUserWorkItem(_ =>
             {
                 try

@@ -10,11 +10,64 @@ namespace EmberwardCoop.Patches
     {
         private static SessionController S => SessionController.Instance;
 
-        [HarmonyPatch(typeof(APopupWindow), nameof(APopupWindow.ShowWindowProc), new Type[0])]
+        // Hook concrete APopupWindow.ShowWindow/CloseWindow instead of abstract ShowWindowProc/CloseWindowProc
+        // or per-subclass overrides (which can be ICF-folded empty stubs in IL2CPP).
+        [HarmonyPatch(typeof(APopupWindow), nameof(APopupWindow.ShowWindow), new Type[0])]
+        [HarmonyPrefix]
+        public static bool APopupWindow_Show_Prefix(APopupWindow __instance)
+        {
+            if (__instance != null && S != null && S.Net != null && S.Net.IsClient && !NetworkScope.IsApplying && S.Ruleset != null)
+            {
+                bool isDraftPopup =
+                    __instance.TryCast<UI_ChooseRewardCardPopup>() != null ||
+                    __instance.TryCast<UI_DiscoverCard_Popup>() != null;
+
+                if (isDraftPopup)
+                {
+                    if (!S.Ruleset.AllowsClientIndependentDraftsAndShops)
+                    {
+                        __instance.OverrideIsWindowFinished(true);
+                        __instance.CloseWindow();
+                        return false;
+                    }
+                    if (S.Run != null)
+                    {
+                        int salt = S.Ruleset.ComputeDraftSeedSalt(S.Net.LocalPlayerId);
+                        if (salt != 0) UnityEngine.Random.InitState(unchecked(S.Run.PendingStageSeed ^ salt ^ Environment.TickCount));
+                    }
+                }
+                else if (__instance.TryCast<UI_AddRuneToTetrisCard_Popup>() != null ||
+                         __instance.TryCast<UI_QuestReward_Popup>() != null)
+                {
+                    if (!S.Ruleset.AllowsClientIndependentDraftsAndShops)
+                    {
+                        __instance.OverrideIsWindowFinished(true);
+                        __instance.CloseWindow();
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        [HarmonyPatch(typeof(APopupWindow), nameof(APopupWindow.ShowWindow), new Type[0])]
         [HarmonyPostfix]
         public static void APopupWindow_Show_Postfix(APopupWindow __instance)
         {
             if (S == null || !S.Net.IsConnected || __instance == null) return;
+
+            if (__instance.TryCast<UI_Defeat_Popup>() != null)
+            {
+                if (S.Net.IsHost)
+                {
+                    S.Ownership.BroadcastRunStats();
+                    S.Modals.BroadcastVictoryOrDefeat(isVictory: false, isFinalBoss: false);
+                    var gd = GameDataManager.instance?.GameplayData;
+                    S.Quests.BroadcastMetaRewardGrant(25, false, false, gd != null ? gd.curWorld : eWorldType.WORLD_1_FOREST, gd != null ? gd.difficulty : eGameDifficultyType.NORMAL);
+                }
+                UI.PostRunSummaryOverlay.AttachToPopup(__instance.transform, isVictory: false);
+            }
+
             if (S.Net.IsClient)
             {
                 S.Run.MenuLockDirty = true;
@@ -29,7 +82,7 @@ namespace EmberwardCoop.Patches
             }
         }
 
-        [HarmonyPatch(typeof(APopupWindow), nameof(APopupWindow.CloseWindowProc), new Type[0])]
+        [HarmonyPatch(typeof(APopupWindow), nameof(APopupWindow.CloseWindow), new Type[0])]
         [HarmonyPostfix]
         public static void APopupWindow_Close_Postfix(APopupWindow __instance)
         {
@@ -37,72 +90,6 @@ namespace EmberwardCoop.Patches
             var kind = ClassifyPopup(__instance);
             if (kind != CoopModalKind.None)
                 S.Modals.NotifyHostPopupClosed(kind);
-        }
-
-        // Close duplicate client reward popups in Host-Shared mode; salt RNG per player in Independent mode.
-        [HarmonyPatch(typeof(UI_ChooseRewardCardPopup), nameof(UI_ChooseRewardCardPopup.ShowWindowProc), new Type[0])]
-        [HarmonyPrefix]
-        public static bool ChooseRewardCard_Show_Prefix(UI_ChooseRewardCardPopup __instance)
-        {
-            if (S != null && S.Net.IsClient && !NetworkScope.IsApplying)
-            {
-                if (!S.Ruleset.AllowsClientIndependentDraftsAndShops)
-                {
-                    __instance.OverrideIsWindowFinished(true);
-                    __instance.CloseWindow();
-                    return false;
-                }
-                int salt = S.Ruleset.ComputeDraftSeedSalt(S.Net.LocalPlayerId);
-                if (salt != 0) UnityEngine.Random.InitState(unchecked(S.Run.PendingStageSeed ^ salt ^ Environment.TickCount));
-            }
-            return true;
-        }
-
-        [HarmonyPatch(typeof(UI_AddRuneToTetrisCard_Popup), nameof(UI_AddRuneToTetrisCard_Popup.ShowWindowProc), new Type[0])]
-        [HarmonyPrefix]
-        public static bool AddRunePopup_Show_Prefix(UI_AddRuneToTetrisCard_Popup __instance)
-        {
-            if (S != null && S.Net.IsClient && !NetworkScope.IsApplying && !S.Ruleset.AllowsClientIndependentDraftsAndShops)
-            {
-                __instance.OverrideIsWindowFinished(true);
-                __instance.CloseWindow();
-                return false;
-            }
-            return true;
-        }
-
-        [HarmonyPatch(typeof(UI_QuestReward_Popup), nameof(UI_QuestReward_Popup.ShowWindowProc), new Type[0])]
-        [HarmonyPrefix]
-        public static bool QuestRewardPopup_Show_Prefix(UI_QuestReward_Popup __instance)
-        {
-            if (S != null && S.Net.IsClient && !NetworkScope.IsApplying && !S.Ruleset.AllowsClientIndependentDraftsAndShops)
-            {
-                __instance.OverrideIsWindowFinished(true);
-                __instance.CloseWindow();
-                return false;
-            }
-            return true;
-        }
-
-        [HarmonyPatch(typeof(UI_DiscoverCard_Popup), nameof(UI_DiscoverCard_Popup.ShowWindowProc), new Type[0])]
-        [HarmonyPrefix]
-        public static bool DiscoverCardPopup_Show_Prefix(UI_DiscoverCard_Popup __instance)
-        {
-            if (__instance != null && S != null && S.Net != null && S.Net.IsClient && !NetworkScope.IsApplying)
-            {
-                if (S.Ruleset != null && !S.Ruleset.AllowsClientIndependentDraftsAndShops)
-                {
-                    __instance.OverrideIsWindowFinished(true);
-                    __instance.CloseWindow();
-                    return false;
-                }
-                if (S.Ruleset != null && S.Run != null)
-                {
-                    int salt = S.Ruleset.ComputeDraftSeedSalt(S.Net.LocalPlayerId);
-                    if (salt != 0) UnityEngine.Random.InitState(unchecked(S.Run.PendingStageSeed ^ salt ^ Environment.TickCount));
-                }
-            }
-            return true;
         }
 
         [HarmonyPatch(typeof(QuestManager), nameof(QuestManager.OnRequestLoadQuestInGame), new Type[0])]

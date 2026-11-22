@@ -274,7 +274,7 @@ namespace EmberwardCoop.Sync
                         }
                     }
 
-                    CoopLogger.Info(LogCategory.Quest, $"Co-op rewards saved to profile: +{expEarned} EXP!", addToFeed: true);
+                    CoopLogger.Info(LogCategory.Quest, $"Co-op rewards saved to profile: +{expEarned} EXP!");
                     if (expEarned > 0)
                         GameRefs.ShowGameToast($"Co-op Profile Saved (+{expEarned} EXP)", 3.0f);
                 }
@@ -304,7 +304,7 @@ namespace EmberwardCoop.Sync
                     {
                         am.UnlockAchievement(achType);
                     }
-                    CoopLogger.Info(LogCategory.Quest, $"Unlocked Co-op Achievement: {achType}!", addToFeed: true);
+                    CoopLogger.Info(LogCategory.Quest, $"Unlocked Co-op Achievement: {achType}!");
                 }
             }
             catch (Exception ex)

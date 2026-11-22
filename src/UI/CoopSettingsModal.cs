@@ -14,6 +14,9 @@ namespace EmberwardCoop.UI
         public static CoopSettingsModal Instance { get; private set; }
 
         private GameObject _root;
+        private RectTransform _winRt;
+        private CanvasGroup _winCg;
+        private float _openAnimProgress = 1f;
         private bool _isOpen;
 
         private ConfigEntry<KeyCode> _rebindingTarget;
@@ -27,9 +30,9 @@ namespace EmberwardCoop.UI
 
         private TMP_Text _valStickerScale;
         private TMP_Text _valStickerVol;
-        private TMP_Text _valMuteStickers;
-        private TMP_Text _valCompactHud;
-        private TMP_Text _valAutoPause;
+        private (TMP_Text txt, Image chk) _valMuteStickers;
+        private (TMP_Text txt, Image chk) _valCompactHud;
+        private (TMP_Text txt, Image chk) _valAutoPause;
 
         public bool IsOpen => _isOpen;
 
@@ -44,16 +47,20 @@ namespace EmberwardCoop.UI
             EnsureBuilt();
             _isOpen = true;
             _rebindingTarget = null;
+            _openAnimProgress = 0f;
             _root.SetActive(true);
             RefreshLabels();
+            NativeStyleProvider.PlayUiOpenSound(true);
         }
 
         public void Close()
         {
+            bool wasOpen = _isOpen;
             _isOpen = false;
             _rebindingTarget = null;
             if (_root != null && _root.activeSelf)
                 _root.SetActive(false);
+            if (wasOpen) NativeStyleProvider.PlayUiOpenSound(false);
         }
 
         public void Toggle()
@@ -65,6 +72,8 @@ namespace EmberwardCoop.UI
         public void Tick()
         {
             if (!_isOpen) return;
+
+            NativeStyleProvider.TickOpenTransition(_winRt, _winCg, ref _openAnimProgress, Time.unscaledDeltaTime, 0.12f);
 
             if (_rebindingTarget != null)
             {
@@ -124,57 +133,71 @@ namespace EmberwardCoop.UI
             _root = new GameObject("EWCoop_ModSettingsModal");
             _root.transform.SetParent(canvas.transform, false);
             NativeStyleProvider.StretchFill(_root.AddComponent<RectTransform>());
-            _root.AddComponent<Image>().color = new Color(0.02f, 0.02f, 0.04f, 0.72f);
+            _root.AddComponent<Image>().color = EmberwardTheme.ModalScrim;
 
             var win = NativeStyleProvider.CreatePanel(_root.transform, "Window", NativeStyleProvider.PanelBg, addBorder: true);
-            var wrt = win.GetComponent<RectTransform>();
-            wrt.anchorMin = new Vector2(0.5f, 0.5f);
-            wrt.anchorMax = new Vector2(0.5f, 0.5f);
-            wrt.sizeDelta = new Vector2(560f, 590f);
+            _winRt = win.GetComponent<RectTransform>();
+            _winRt.anchorMin = new Vector2(0.5f, 0.5f);
+            _winRt.anchorMax = new Vector2(0.5f, 0.5f);
+            _winRt.sizeDelta = new Vector2(488f, 440f);
+            _winCg = win.AddComponent<CanvasGroup>();
+
+            var winFit = win.AddComponent<ContentSizeFitter>();
+            winFit.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            winFit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             var vlg = win.AddComponent<VerticalLayoutGroup>();
-            vlg.padding = new RectOffset(22, 22, 16, 16);
-            vlg.spacing = 8f;
+            vlg.padding = new RectOffset(20, 20, 17, 18);
+            vlg.spacing = 7f;
             vlg.childControlWidth = true;
             vlg.childControlHeight = true;
             vlg.childForceExpandWidth = true;
             vlg.childForceExpandHeight = false;
 
-            var hdr = CreateRow(win.transform, "Header", 36f);
-            _titleText = NativeStyleProvider.CreateLabel(hdr.transform, CoopLoc.T("modcfg.title"), 21f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
+            var hdr = CreateRow(win.transform, "Header", 30f);
+            _titleText = NativeStyleProvider.CreateLabel(hdr.transform, CoopLoc.T("modcfg.title"), 17.5f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, autoSize: true, minFontSize: 13f, addShadow: true);
             _titleText.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
-            var xBtn = NativeStyleProvider.CreateButton(hdr.transform, "X", NativeStyleProvider.ButtonSecondary, Close, 15f, 32f);
-            xBtn.GetComponent<LayoutElement>().preferredWidth = 38f;
+            NativeStyleProvider.CreateCloseButton(hdr.transform, Close, 26f);
 
-            AddKeybindRow(win.transform, "modcfg.key_lobby", CoopConfig.ToggleLobbyKey);
-            AddKeybindRow(win.transform, "modcfg.key_emote", CoopConfig.EmoteWheelKey);
-            AddKeybindRow(win.transform, "modcfg.key_ping", CoopConfig.PingHotkey);
-            AddKeybindRow(win.transform, "modcfg.key_sketch", CoopConfig.SketchModifierKey);
-            AddKeybindRow(win.transform, "modcfg.key_undo", CoopConfig.UndoBuildKey);
+            NativeStyleProvider.CreateDivider(win.transform, "HdrDiv");
 
-            _valStickerScale = AddStepperRow(win.transform, "modcfg.sticker_scale",
+            var scroll = NativeStyleProvider.CreateScrollView(win.transform, "ModSettingsScroll", NativeStyleProvider.PanelWellBg, out RectTransform contentRt, padding: 8f, spacing: 5f);
+            var scrollLe = scroll.gameObject.AddComponent<LayoutElement>();
+            scrollLe.minHeight = 260f;
+            scrollLe.preferredHeight = 360f;
+
+            AddKeybindRow(contentRt, "modcfg.key_lobby", CoopConfig.ToggleLobbyKey);
+            AddKeybindRow(contentRt, "modcfg.key_hud", CoopConfig.ToggleHudKey);
+            AddKeybindRow(contentRt, "modcfg.key_emote", CoopConfig.EmoteWheelKey);
+            AddKeybindRow(contentRt, "modcfg.key_ping", CoopConfig.PingHotkey);
+            AddKeybindRow(contentRt, "modcfg.key_sketch", CoopConfig.SketchModifierKey);
+            AddKeybindRow(contentRt, "modcfg.key_undo", CoopConfig.UndoBuildKey);
+
+            NativeStyleProvider.CreateDivider(contentRt, "MidDiv");
+
+            _valStickerScale = AddStepperRow(contentRt, "modcfg.sticker_scale",
                 () => { CoopConfig.StickerScale.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerScale.Value - 0.1f, 1), 0.6f, 1.6f); RefreshLabels(); },
                 () => { CoopConfig.StickerScale.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerScale.Value + 0.1f, 1), 0.6f, 1.6f); RefreshLabels(); });
 
-            _valStickerVol = AddStepperRow(win.transform, "modcfg.sticker_vol",
+            _valStickerVol = AddStepperRow(contentRt, "modcfg.sticker_vol",
                 () => { CoopConfig.StickerAudioVolume.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerAudioVolume.Value - 0.15f, 2), 0f, 1f); RefreshLabels(); },
                 () => { CoopConfig.StickerAudioVolume.Value = Mathf.Clamp((float)Math.Round(CoopConfig.StickerAudioVolume.Value + 0.15f, 2), 0f, 1f); RefreshLabels(); });
 
-            _valMuteStickers = AddToggleRow(win.transform, "modcfg.mute_stickers",
+            _valMuteStickers = AddToggleRow(contentRt, "modcfg.mute_stickers",
                 () => { CoopConfig.MuteTeammateStickers.Value = !CoopConfig.MuteTeammateStickers.Value; RefreshLabels(); });
 
-            _valCompactHud = AddToggleRow(win.transform, "modcfg.compact_hud",
+            _valCompactHud = AddToggleRow(contentRt, "modcfg.compact_hud",
                 () => { CoopConfig.CompactHudMode.Value = !CoopConfig.CompactHudMode.Value; RefreshLabels(); });
 
-            _valAutoPause = AddToggleRow(win.transform, "modcfg.auto_pause",
+            _valAutoPause = AddToggleRow(contentRt, "modcfg.auto_pause",
                 () => { CoopConfig.AutoPauseOnDisconnect.Value = !CoopConfig.AutoPauseOnDisconnect.Value; RefreshLabels(); });
 
-            var foot = CreateRow(win.transform, "Footer", 42f);
-            _langText = NativeStyleProvider.CreateLabel(foot.transform, "", 13f, NativeStyleProvider.TextMuted, TextAlignmentOptions.MidlineLeft);
+            var foot = CreateRow(win.transform, "Footer", 36f);
+            _langText = NativeStyleProvider.CreateLabel(foot.transform, "", 12f, NativeStyleProvider.TextMuted, TextAlignmentOptions.MidlineLeft);
             _langText.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
 
-            var closeBtn = NativeStyleProvider.CreateButton(foot.transform, CoopLoc.T("modcfg.close"), NativeStyleProvider.ButtonPrimary, Close, 15f, 38f);
-            closeBtn.GetComponent<LayoutElement>().preferredWidth = 130f;
+            var closeBtn = NativeStyleProvider.CreateButton(foot.transform, CoopLoc.T("modcfg.close"), NativeStyleProvider.ButtonPrimary, Close, 13.5f, 34f);
+            closeBtn.GetComponent<LayoutElement>().preferredWidth = 118f;
             _closeBtnText = closeBtn.GetComponentInChildren<TMP_Text>();
 
             _root.SetActive(false);
@@ -182,8 +205,8 @@ namespace EmberwardCoop.UI
 
         private void AddKeybindRow(Transform parent, string locKey, ConfigEntry<KeyCode> entry)
         {
-            var row = CreateRow(parent, locKey, 36f);
-            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 14f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft);
+            var row = CreateRow(parent, locKey, 32f);
+            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 13f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
             lbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             _staticLabels.Add((locKey, lbl));
 
@@ -192,40 +215,42 @@ namespace EmberwardCoop.UI
             {
                 _rebindingTarget = entry;
                 if (btnTxt != null) btnTxt.text = CoopLoc.T("modcfg.press_any_key");
-            }, 13f, 32f);
-            btn.GetComponent<LayoutElement>().preferredWidth = 175f;
+            }, 12.5f, 28f);
+            btn.GetComponent<LayoutElement>().preferredWidth = 160f;
             btnTxt = btn.GetComponentInChildren<TMP_Text>();
             _keybindButtons.Add((entry, btnTxt));
         }
 
         private TMP_Text AddStepperRow(Transform parent, string locKey, Action onMinus, Action onPlus)
         {
-            var row = CreateRow(parent, locKey, 36f);
-            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 14f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft);
+            var row = CreateRow(parent, locKey, 32f);
+            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 13f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
             lbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             _staticLabels.Add((locKey, lbl));
 
-            var minus = NativeStyleProvider.CreateButton(row.transform, "-", NativeStyleProvider.ButtonSecondary, onMinus, 16f, 30f);
-            minus.GetComponent<LayoutElement>().preferredWidth = 34f;
+            var minus = NativeStyleProvider.CreateButton(row.transform, "-", NativeStyleProvider.ButtonSecondary, onMinus, 14f, 28f);
+            minus.GetComponent<LayoutElement>().preferredWidth = 30f;
 
-            var val = NativeStyleProvider.CreateLabel(row.transform, "", 14f, NativeStyleProvider.EmberGold, TextAlignmentOptions.Center, FontStyles.Bold);
-            val.gameObject.AddComponent<LayoutElement>().preferredWidth = 96f;
+            var val = NativeStyleProvider.CreateLabel(row.transform, "", 13f, NativeStyleProvider.EmberGold, TextAlignmentOptions.Center, FontStyles.Bold);
+            val.gameObject.AddComponent<LayoutElement>().preferredWidth = 88f;
 
-            var plus = NativeStyleProvider.CreateButton(row.transform, "+", NativeStyleProvider.ButtonSecondary, onPlus, 16f, 30f);
-            plus.GetComponent<LayoutElement>().preferredWidth = 34f;
+            var plus = NativeStyleProvider.CreateButton(row.transform, "+", NativeStyleProvider.ButtonSecondary, onPlus, 14f, 28f);
+            plus.GetComponent<LayoutElement>().preferredWidth = 30f;
             return val;
         }
 
-        private TMP_Text AddToggleRow(Transform parent, string locKey, Action onToggle)
+        private (TMP_Text txt, Image chk) AddToggleRow(Transform parent, string locKey, Action onToggle)
         {
-            var row = CreateRow(parent, locKey, 36f);
-            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 14f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft);
+            var row = CreateRow(parent, locKey, 32f);
+            var lbl = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T(locKey), 13f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
             lbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
             _staticLabels.Add((locKey, lbl));
 
-            var btn = NativeStyleProvider.CreateButton(row.transform, "", NativeStyleProvider.ButtonSecondary, onToggle, 13f, 30f);
-            btn.GetComponent<LayoutElement>().preferredWidth = 175f;
-            return btn.GetComponentInChildren<TMP_Text>();
+            var chk = NativeStyleProvider.CreateCheckboxIndicator(row.transform, false, 18f);
+
+            var btn = NativeStyleProvider.CreateButton(row.transform, "", NativeStyleProvider.ButtonSecondary, onToggle, 12.5f, 28f);
+            btn.GetComponent<LayoutElement>().preferredWidth = 134f;
+            return (btn.GetComponentInChildren<TMP_Text>(), chk);
         }
 
         private void RefreshLabels()
@@ -247,9 +272,19 @@ namespace EmberwardCoop.UI
 
             if (_valStickerScale != null) _valStickerScale.text = $"{CoopConfig.StickerScale.Value:0.0}x";
             if (_valStickerVol != null) _valStickerVol.text = $"{Mathf.RoundToInt(CoopConfig.StickerAudioVolume.Value * 100)}%";
-            if (_valMuteStickers != null) _valMuteStickers.text = CoopConfig.MuteTeammateStickers.Value ? CoopLoc.T("modcfg.on") : CoopLoc.T("modcfg.off");
-            if (_valCompactHud != null) _valCompactHud.text = CoopConfig.CompactHudMode.Value ? CoopLoc.T("modcfg.on") : CoopLoc.T("modcfg.off");
-            if (_valAutoPause != null) _valAutoPause.text = CoopConfig.AutoPauseOnDisconnect.Value ? CoopLoc.T("modcfg.on") : CoopLoc.T("modcfg.off");
+            UpdateToggleVisual(_valMuteStickers, CoopConfig.MuteTeammateStickers.Value);
+            UpdateToggleVisual(_valCompactHud, CoopConfig.CompactHudMode.Value);
+            UpdateToggleVisual(_valAutoPause, CoopConfig.AutoPauseOnDisconnect.Value);
+        }
+
+        private static void UpdateToggleVisual((TMP_Text txt, Image chk) pair, bool isOn)
+        {
+            if (pair.txt != null) pair.txt.text = isOn ? CoopLoc.T("modcfg.on") : CoopLoc.T("modcfg.off");
+            if (pair.chk != null)
+            {
+                pair.chk.sprite = NativeAssetRegistry.GetCheckboxSprite(isOn);
+                pair.chk.color = isOn ? NativeStyleProvider.StatusReady : NativeStyleProvider.TextMuted;
+            }
         }
 
         private static GameObject CreateRow(Transform parent, string name, float height)

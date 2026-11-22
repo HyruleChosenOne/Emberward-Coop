@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using BepInEx.Logging;
+using UnityEngine;
 
 namespace EmberwardCoop.Core
 {
@@ -16,14 +17,32 @@ namespace EmberwardCoop.Core
         Presence
     }
 
+    public enum ChatEntryKind
+    {
+        PlayerChat = 0,
+        QuickCallout = 1,
+        Emote = 2,
+        ConnectionSuccess = 3
+    }
+
+    public sealed class ChatLogEntry
+    {
+        public ChatEntryKind Kind;
+        public string Timestamp;
+        public string PlainText;
+        public string RichText;
+        public float CreatedUnscaledTime;
+    }
+
     public static class CoopLogger
     {
         private static ManualLogSource _log;
-        private static readonly List<string> _feed = new List<string>(64);
-        private static readonly object _feedLock = new object();
-        public const int MaxFeedEntries = 60;
+        private static readonly List<ChatLogEntry> _chatEntries = new List<ChatLogEntry>(64);
+        private static readonly object _chatLock = new object();
+        public const int MaxFeedEntries = 50;
 
-        public static event Action<string> OnFeedEntryAdded;
+        public static float LastChatActivityTime { get; private set; } = -999f;
+        public static event Action<ChatLogEntry> OnFeedEntryAdded;
 
         public static void Initialize(ManualLogSource log)
         {
@@ -40,12 +59,9 @@ namespace EmberwardCoop.Core
             _ => true
         };
 
-        public static void Info(LogCategory category, string message, bool addToFeed = false)
+        public static void Info(LogCategory category, string message)
         {
-            string formatted = $"[{category}] {message}";
-            _log?.LogInfo(formatted);
-            if (addToFeed)
-                PushFeed(message);
+            _log?.LogInfo($"[{category}] {message}");
         }
 
         public static void Debug(LogCategory category, string message)
@@ -54,12 +70,9 @@ namespace EmberwardCoop.Core
             _log?.LogInfo($"[{category}:DBG] {message}");
         }
 
-        public static void Warn(LogCategory category, string message, bool addToFeed = false)
+        public static void Warn(LogCategory category, string message)
         {
-            string formatted = $"[{category}] {message}";
-            _log?.LogWarning(formatted);
-            if (addToFeed)
-                PushFeed($"! {message}");
+            _log?.LogWarning($"[{category}] {message}");
         }
 
         public static void Error(LogCategory category, string message, Exception ex = null)
@@ -68,31 +81,82 @@ namespace EmberwardCoop.Core
             _log?.LogError(formatted);
         }
 
-        public static void PushFeed(string message)
+        public static void PushChatMessage(ChatEntryKind kind, string text, Color? accentColor = null)
         {
-            string entry = $"[{DateTime.Now:HH:mm:ss}] {message}";
-            lock (_feedLock)
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            string ts = DateTime.Now.ToString("HH:mm");
+            string clean = text.Trim();
+            string plain = $"[{ts}] {clean}";
+
+            string rich;
+            switch (kind)
             {
-                _feed.Add(entry);
-                if (_feed.Count > MaxFeedEntries)
-                    _feed.RemoveAt(0);
+                case ChatEntryKind.ConnectionSuccess:
+                    rich = $"<color=#A89984>[{ts}]</color> <color=#7BE08A>{EscapeTmp(clean)}</color>";
+                    break;
+                case ChatEntryKind.Emote:
+                    rich = accentColor.HasValue
+                        ? $"<color=#A89984>[{ts}]</color> <color=#{ColorUtility.ToHtmlStringRGB(accentColor.Value)}>{EscapeTmp(clean)}</color>"
+                        : $"<color=#A89984>[{ts}]</color> <color=#F7C95A>{EscapeTmp(clean)}</color>";
+                    break;
+                case ChatEntryKind.QuickCallout:
+                    rich = accentColor.HasValue
+                        ? $"<color=#A89984>[{ts}]</color> <color=#{ColorUtility.ToHtmlStringRGB(accentColor.Value)}>{EscapeTmp(clean)}</color>"
+                        : $"<color=#A89984>[{ts}]</color> <color=#F5DFB0>{EscapeTmp(clean)}</color>";
+                    break;
+                default:
+                    rich = accentColor.HasValue
+                        ? $"<color=#A89984>[{ts}]</color> <color=#{ColorUtility.ToHtmlStringRGB(accentColor.Value)}>{EscapeTmp(clean)}</color>"
+                        : $"<color=#A89984>[{ts}]</color> <color=#FAF0DC>{EscapeTmp(clean)}</color>";
+                    break;
             }
+
+            float now = 0f;
+            try { now = Time.unscaledTime; } catch { }
+
+            var entry = new ChatLogEntry
+            {
+                Kind = kind,
+                Timestamp = ts,
+                PlainText = plain,
+                RichText = rich,
+                CreatedUnscaledTime = now
+            };
+
+            lock (_chatLock)
+            {
+                _chatEntries.Add(entry);
+                if (_chatEntries.Count > MaxFeedEntries)
+                    _chatEntries.RemoveAt(0);
+                LastChatActivityTime = now;
+            }
+
             try { OnFeedEntryAdded?.Invoke(entry); } catch { }
         }
 
-        public static List<string> GetFeedSnapshot()
+        private static string EscapeTmp(string s)
+            => string.IsNullOrEmpty(s) ? "" : s.Replace("<", "\u2039").Replace(">", "\u203A");
+
+        public static List<ChatLogEntry> GetChatSnapshot()
         {
-            lock (_feedLock)
+            lock (_chatLock)
             {
-                return new List<string>(_feed);
+                return new List<ChatLogEntry>(_chatEntries);
             }
+        }
+
+        public static int ChatCount
+        {
+            get { lock (_chatLock) { return _chatEntries.Count; } }
         }
 
         public static void ClearFeed()
         {
-            lock (_feedLock)
+            lock (_chatLock)
             {
-                _feed.Clear();
+                _chatEntries.Clear();
+                LastChatActivityTime = -999f;
             }
         }
     }

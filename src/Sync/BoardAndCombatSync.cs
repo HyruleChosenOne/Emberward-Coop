@@ -698,7 +698,7 @@ namespace EmberwardCoop.Sync
             var deckUI = GameRefs.GetPlayerDeck();
             if (deckUI == null) return;
             using (NetworkScope.Enter()) deckUI.OnClickButton_Mulligan();
-            CoopLogger.Info(LogCategory.Sync, $"{_net.GetPlayerName(senderId)} triggered Mulligan.", addToFeed: true);
+            CoopLogger.Info(LogCategory.Sync, $"{_net.GetPlayerName(senderId)} triggered Mulligan.");
             _session()?.Economy.CheckHostEconomyAndHand(force: true);
         }
 

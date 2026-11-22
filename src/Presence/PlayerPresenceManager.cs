@@ -223,11 +223,11 @@ namespace EmberwardCoop.Presence
                 if (av.TagObj != null && av.TagRect != null && cam != null)
                 {
                     Vector3 sp = cam.WorldToScreenPoint(av.CurrentPos + new Vector3(0f, 1.25f, 0f));
-                    bool onScreen = sp.z > 0f;
+                    bool onScreen = sp.z > 0f && sp.x >= 0f && sp.x <= Screen.width && sp.y >= 0f && sp.y <= Screen.height;
                     if (av.TagObj.activeSelf != onScreen) av.TagObj.SetActive(onScreen);
                     if (onScreen)
                     {
-                        av.TagRect.position = new Vector3(sp.x, sp.y, 0f);
+                        av.TagRect.anchoredPosition = NativeStyleProvider.ScreenToCanvasLocal(new Vector2(sp.x, sp.y));
                         if (av.TagText != null)
                         {
                             av.TagText.text = av.IsPlacing && av.PlacingItemType > 0
@@ -289,34 +289,28 @@ namespace EmberwardCoop.Presence
             var canvasRoot = NativeStyleProvider.GetOrCreateOverlayCanvas();
             if (canvasRoot != null)
             {
-                av.TagObj = new GameObject($"EWCoop_Nameplate_{av.PlayerId}");
-                av.TagObj.transform.SetParent(canvasRoot.transform, false);
-                av.TagRect = av.TagObj.AddComponent<RectTransform>();
-                av.TagRect.sizeDelta = new Vector2(170f, 24f);
+                av.TagObj = NativeStyleProvider.CreatePanel(canvasRoot.transform, $"EWCoop_Nameplate_{av.PlayerId}", NativeStyleProvider.TooltipBg, addBorder: true, isSubPanel: true);
+                av.TagRect = av.TagObj.GetComponent<RectTransform>();
+                av.TagRect.anchorMin = new Vector2(0.5f, 0.5f);
+                av.TagRect.anchorMax = new Vector2(0.5f, 0.5f);
 
-                var bg = av.TagObj.AddComponent<Image>();
-                bg.color = new Color(0.09f, 0.08f, 0.12f, 0.80f);
-                bg.raycastTarget = false;
+                var cg = av.TagObj.AddComponent<CanvasGroup>();
+                cg.blocksRaycasts = false;
+                cg.interactable = false;
 
-                var outline = av.TagObj.AddComponent<Outline>();
-                outline.effectColor = new Color(col.r, col.g, col.b, 0.90f);
-                outline.effectDistance = new Vector2(1.2f, -1.2f);
+                var hlg = av.TagObj.AddComponent<HorizontalLayoutGroup>();
+                hlg.padding = new RectOffset(10, 12, 6, 6);
+                hlg.spacing = 5f;
+                hlg.childAlignment = TextAnchor.MiddleLeft;
+                hlg.childControlWidth = true;
+                hlg.childControlHeight = true;
+                hlg.childForceExpandWidth = false;
+                var fit = av.TagObj.AddComponent<ContentSizeFitter>();
+                fit.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+                fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-                var txtObj = new GameObject("Name");
-                txtObj.transform.SetParent(av.TagObj.transform, false);
-                var tr = txtObj.AddComponent<RectTransform>();
-                tr.anchorMin = Vector2.zero;
-                tr.anchorMax = Vector2.one;
-                tr.offsetMin = new Vector2(5f, 1f);
-                tr.offsetMax = new Vector2(-5f, -1f);
-
-                var tmp = txtObj.AddComponent<TextMeshProUGUI>();
-                if (NativeStyleProvider.PrimaryFont != null) tmp.font = NativeStyleProvider.PrimaryFont;
-                tmp.fontSize = 12f;
-                tmp.alignment = TextAlignmentOptions.Center;
-                tmp.color = col;
-                tmp.raycastTarget = false;
-                av.TagText = tmp;
+                NativeStyleProvider.CreateHeroAvatarWidget(av.TagObj.transform, _net.GetPlayerAvatarHeroId(av.PlayerId), col, 18f, clickable: false);
+                av.TagText = NativeStyleProvider.CreateLabel(av.TagObj.transform, av.PlayerName ?? "", 11.5f, col, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true);
             }
         }
 

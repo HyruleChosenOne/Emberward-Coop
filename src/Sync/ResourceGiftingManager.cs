@@ -62,9 +62,9 @@ namespace EmberwardCoop.Sync
             _session()?.Ownership.RecordGoldGifted(_net.LocalPlayerId, amount);
 
             string targetName = _net.GetPlayerName(targetPlayerId);
-            CoopLogger.Info(LogCategory.Sync, $"Sent {amount}g to {targetName}!", addToFeed: true);
-            GameRefs.ShowGameToast($"Sent {amount}g -> {targetName}", 2.0f);
-            NativeStyleProvider.PlayUiClickSound(1.2f);
+            CoopLogger.Info(LogCategory.Sync, $"Sent {amount}g to {targetName}!");
+            _session()?.Emotes.ShowGoldTransferToast(targetPlayerId, $"-{amount}g → {targetName}");
+            NativeStyleProvider.PlayUiCoinSound();
 
             if (_net.IsHost)
             {
@@ -130,8 +130,9 @@ namespace EmberwardCoop.Sync
             }
 
             string senderName = _net.GetPlayerName(senderId);
-            CoopLogger.Info(LogCategory.Sync, $"Received +{amount}g from {senderName}.", addToFeed: true);
-            GameRefs.ShowGameToast($"+{amount}g from {senderName}", 2.8f);
+            CoopLogger.Info(LogCategory.Sync, $"Received +{amount}g from {senderName}.");
+            _session()?.Emotes.ShowGoldTransferToast(senderId, $"+{amount}g ← {senderName}");
+            NativeStyleProvider.PlayUiCoinSound();
 
             Vector3 vfxPos = MapManager.Instance?.PlayerMainOrigin != null
                 ? MapManager.Instance.PlayerMainOrigin.transform.position

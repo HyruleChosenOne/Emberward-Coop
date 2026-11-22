@@ -91,6 +91,10 @@ namespace EmberwardCoop.UI
                     if (tmps[i] == null) continue;
                     tmps[i].text = CoopLoc.T("title.coop_button");
                     tmps[i].color = NativeStyleProvider.EmberGold;
+                    tmps[i].enableAutoSizing = true;
+                    tmps[i].fontSizeMin = 14f;
+                    tmps[i].fontSizeMax = Mathf.Max(22f, tmps[i].fontSize);
+                    tmps[i].overflowMode = TextOverflowModes.Ellipsis;
                     if (NativeStyleProvider.PrimaryFont != null) tmps[i].font = NativeStyleProvider.PrimaryFont;
                 }
             }

@@ -56,7 +56,6 @@ namespace EmberwardCoop.Core
             }
             else if (inTitle && _wasInActiveRun)
             {
-                // Reopen the pre-run lobby if still connected after returning to the title screen.
                 _wasInActiveRun = false;
                 if (_session.Net.IsConnected)
                 {
@@ -85,6 +84,21 @@ namespace EmberwardCoop.Core
             _hudOverlay?.Tick(now);
             _disconnectModal?.Tick(now);
             _settingsModal?.Tick();
+        }
+
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (!hasFocus && _session != null)
+            {
+                // Guarantee zero stuck-input or camera-lock states when window loses focus
+                _session.Emotes.CloseWheel(absorbRelease: false);
+                _session.Feedback.CancelAndCloseWheel(absorbRelease: false);
+                _session.Sketch.CancelLocalDrag();
+                CoopInputGuard.IsEmoteWheelOpen = false;
+                CoopInputGuard.IsPingWheelOpen = false;
+                CoopInputGuard.IsPingKeyHolding = false;
+                CoopInputGuard.IsMazeSketching = false;
+            }
         }
 
         private void OnApplicationQuit()

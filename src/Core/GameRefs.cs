@@ -24,6 +24,10 @@ namespace EmberwardCoop.Core
         private static UI_QuestStatus _questStatus;
         private static UI_TowerControl _towerControl;
         private static UI_Notification _notification;
+        private static CameraController _cameraController;
+        private static InteractionManager _interactionManager;
+        private static UI_NextWaveEnemy _nextWaveEnemy;
+        private static UI_StageProgress _stageProgress;
 
         private static Il2CppSystem.Enum _boxedRequestStartNextWave;
 
@@ -53,6 +57,10 @@ namespace EmberwardCoop.Core
             _questStatus = null;
             _towerControl = null;
             _notification = null;
+            _cameraController = null;
+            _interactionManager = null;
+            _nextWaveEnemy = null;
+            _stageProgress = null;
             return true;
         }
 
@@ -82,6 +90,22 @@ namespace EmberwardCoop.Core
             if (_pauseMenu == null && IsInBattle)
                 _pauseMenu = UnityEngine.Object.FindObjectOfType<UI_PauseMenu>(true);
             return _pauseMenu;
+        }
+
+        public static bool IsVanillaPauseMenuOpen()
+        {
+            try
+            {
+                var pm = GetPauseMenu();
+                if (pm == null || !pm.gameObject.activeInHierarchy) return false;
+                var anim = pm.transform.Find("Node_Animator");
+                if (anim != null) return anim.gameObject.activeInHierarchy;
+                return pm.button_Resume != null && pm.button_Resume.gameObject.activeInHierarchy;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public static UI_Victory_Popup GetVictoryPopup()
@@ -150,6 +174,100 @@ namespace EmberwardCoop.Core
             if (_towerControl == null && IsInBattle)
                 _towerControl = UnityEngine.Object.FindObjectOfType<UI_TowerControl>(true);
             return _towerControl;
+        }
+
+        public static UI_NextWaveEnemy GetNextWaveEnemy()
+        {
+            if (_nextWaveEnemy == null && IsInBattle)
+                _nextWaveEnemy = UnityEngine.Object.FindObjectOfType<UI_NextWaveEnemy>(true);
+            return _nextWaveEnemy;
+        }
+
+        public static UI_StageProgress GetStageProgress()
+        {
+            if (_stageProgress == null && IsInBattle)
+                _stageProgress = UnityEngine.Object.FindObjectOfType<UI_StageProgress>(true);
+            return _stageProgress;
+        }
+
+        public static CameraController GetCameraController()
+        {
+            if (_cameraController == null && IsInBattle)
+            {
+                try
+                {
+                    var cm = CameraManager.Instance;
+                    if (cm != null && cm.MainCameraController != null)
+                        _cameraController = cm.MainCameraController;
+                }
+                catch { }
+
+                if (_cameraController == null)
+                    _cameraController = UnityEngine.Object.FindObjectOfType<CameraController>();
+            }
+            return _cameraController;
+        }
+
+        public static InteractionManager GetInteractionManager()
+        {
+            if (_interactionManager == null && IsInBattle)
+                _interactionManager = UnityEngine.Object.FindObjectOfType<InteractionManager>();
+            return _interactionManager;
+        }
+
+        public static bool TryGetRectTransformScreenBounds(RectTransform rt, out Rect screenRect)
+        {
+            screenRect = default;
+            if (rt == null) return false;
+            try
+            {
+                Canvas c = rt.GetComponentInParent<Canvas>();
+                Camera uiCam = (c != null && c.renderMode != RenderMode.ScreenSpaceOverlay) ? c.worldCamera : null;
+
+                var corners = new Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<Vector3>(4);
+                rt.GetWorldCorners(corners);
+                float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
+                for (int i = 0; i < 4; i++)
+                {
+                    Vector2 sp = RectTransformUtility.WorldToScreenPoint(uiCam, corners[i]);
+                    if (sp.x < minX) minX = sp.x;
+                    if (sp.y < minY) minY = sp.y;
+                    if (sp.x > maxX) maxX = sp.x;
+                    if (sp.y > maxY) maxY = sp.y;
+                }
+                if (minX > maxX || minY > maxY) return false;
+                screenRect = Rect.MinMaxRect(minX, minY, maxX, maxY);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static bool TryGetActiveTowerInspectionScreenRect(out Rect screenRect)
+        {
+            screenRect = default;
+            try
+            {
+                var tc = GetTowerControl();
+                if (tc == null || tc.curTower == null || !tc.gameObject.activeInHierarchy)
+                    return false;
+
+                var rt = tc.GetComponent<RectTransform>();
+                if (!TryGetRectTransformScreenBounds(rt, out Rect raw))
+                    return false;
+
+                // Expand moderately because UI_TowerControl buttons fan out around its center node
+                float padX = Screen.width * 0.085f;
+                float padY = Screen.height * 0.10f;
+                screenRect = Rect.MinMaxRect(raw.xMin - padX, raw.yMin - padY, raw.xMax + padX, raw.yMax + padY);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         public static UI_Notification GetNotification()
