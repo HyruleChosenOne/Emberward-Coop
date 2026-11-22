@@ -88,16 +88,19 @@ namespace EmberwardCoop.Patches
         [HarmonyPrefix]
         public static bool DiscoverCardPopup_Show_Prefix(UI_DiscoverCard_Popup __instance)
         {
-            if (S != null && S.Net.IsClient && !NetworkScope.IsApplying)
+            if (__instance != null && S != null && S.Net != null && S.Net.IsClient && !NetworkScope.IsApplying)
             {
-                if (!S.Ruleset.AllowsClientIndependentDraftsAndShops)
+                if (S.Ruleset != null && !S.Ruleset.AllowsClientIndependentDraftsAndShops)
                 {
                     __instance.OverrideIsWindowFinished(true);
                     __instance.CloseWindow();
                     return false;
                 }
-                int salt = S.Ruleset.ComputeDraftSeedSalt(S.Net.LocalPlayerId);
-                if (salt != 0) UnityEngine.Random.InitState(unchecked(S.Run.PendingStageSeed ^ salt ^ Environment.TickCount));
+                if (S.Ruleset != null && S.Run != null)
+                {
+                    int salt = S.Ruleset.ComputeDraftSeedSalt(S.Net.LocalPlayerId);
+                    if (salt != 0) UnityEngine.Random.InitState(unchecked(S.Run.PendingStageSeed ^ salt ^ Environment.TickCount));
+                }
             }
             return true;
         }
