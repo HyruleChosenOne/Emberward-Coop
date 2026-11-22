@@ -1,0 +1,29 @@
+# Build output
+bin/
+obj/
+dist/
+
+# Compiled plugin artifacts & local game assemblies
+*.dll
+*.pdb
+*.deps.json
+*.xml
+*.zip
+
+# IDE & user settings
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Runtime data & logs
+Presets/
+*.log
+*.cfg
+
+# OS metadata
+.DS_Store
+Thumbs.db

@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Copy this file to EmberwardCoop.csproj.user and point EmberwardDir at your local install. -->
+    <EmberwardDir>C:\Program Files (x86)\Steam\steamapps\common\Emberward</EmberwardDir>
+  </PropertyGroup>
+</Project>

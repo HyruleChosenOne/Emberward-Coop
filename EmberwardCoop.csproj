@@ -1,0 +1,94 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>EmberwardCoop</AssemblyName>
+    <RootNamespace>EmberwardCoop</RootNamespace>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Product>Emberward Co-op</Product>
+    <Authors>HyruleChosenOne</Authors>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Optimize>true</Optimize>
+    <Nullable>disable</Nullable>
+    <NoWarn>CA1416</NoWarn>
+    <Deterministic>true</Deterministic>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+
+    <!-- Auto-detect when cloned inside BepInEx\plugins\EmberwardCoop; override via EmberwardDir env var or EmberwardCoop.csproj.user -->
+    <EmberwardDir Condition="'$(EmberwardDir)' == '' and Exists('$(MSBuildProjectDirectory)\..\..\..\Emberward.exe')">$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..\..\..'))</EmberwardDir>
+    <EmberwardDir Condition="'$(EmberwardDir)' == ''">$(ProgramFiles(x86))\Steam\steamapps\common\Emberward</EmberwardDir>
+
+    <Net6Dir>$(EmberwardDir)\dotnet</Net6Dir>
+    <BepInExCore>$(EmberwardDir)\BepInEx\core</BepInExCore>
+    <InteropDir>$(EmberwardDir)\BepInEx\interop</InteropDir>
+  </PropertyGroup>
+
+  <Target Name="ValidateEmberwardDir" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(InteropDir)\Asmdef_Emberward.dll')" Text="Emberward interop assemblies were not found under '$(EmberwardDir)'. Set EmberwardDir via EmberwardCoop.csproj.user, environment variable, or -p:EmberwardDir=&quot;...&quot;, and launch Emberward once with BepInEx 6 IL2CPP installed." />
+  </Target>
+
+  <ItemGroup>
+    <Content Include="Languages\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Game-bundled .NET 6 runtime references -->
+    <Reference Include="$(Net6Dir)\System.Private.CoreLib.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Runtime.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Runtime.Extensions.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Runtime.InteropServices.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Collections.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Collections.Concurrent.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Linq.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.IO.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.IO.FileSystem.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Console.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Text.Encoding.Extensions.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Text.Json.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Text.Encodings.Web.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Text.RegularExpressions.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Threading.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Threading.Thread.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Threading.ThreadPool.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Net.Primitives.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Net.Sockets.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Net.NameResolution.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Net.NetworkInformation.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.Memory.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\System.ComponentModel.Primitives.dll"><Private>false</Private></Reference>
+    <Reference Include="$(Net6Dir)\netstandard.dll"><Private>false</Private></Reference>
+
+    <!-- BepInEx 6 IL2CPP & Harmony -->
+    <Reference Include="$(BepInExCore)\0Harmony.dll"><Private>false</Private></Reference>
+    <Reference Include="$(BepInExCore)\BepInEx.Core.dll"><Private>false</Private></Reference>
+    <Reference Include="$(BepInExCore)\BepInEx.Unity.Common.dll"><Private>false</Private></Reference>
+    <Reference Include="$(BepInExCore)\BepInEx.Unity.IL2CPP.dll"><Private>false</Private></Reference>
+    <Reference Include="$(BepInExCore)\Il2CppInterop.Common.dll"><Private>false</Private></Reference>
+    <Reference Include="$(BepInExCore)\Il2CppInterop.Runtime.dll"><Private>false</Private></Reference>
+
+    <!-- Game Interop & Unity Assemblies -->
+    <Reference Include="$(InteropDir)\Il2Cppmscorlib.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\Il2CppSystem.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\Il2CppSystem.Core.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.CoreModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.PhysicsModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.AudioModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.ParticleSystemModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.AnimationModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.InputLegacyModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.TextRenderingModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.TextCoreFontEngineModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.UI.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\UnityEngine.UIModule.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\Unity.TextMeshPro.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\com.rlabrecque.steamworks.net.dll"><Private>false</Private></Reference>
+    <Reference Include="$(InteropDir)\Asmdef_Emberward.dll"><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>
