@@ -103,6 +103,7 @@ namespace EmberwardCoop.Sync
         {
             if (!_net.IsHost) return;
             CoopLogger.Debug(LogCategory.Modal, $"Host closed modal: {kind}");
+            _session()?.Votes.CloseSharedDraft(broadcast: true);
             _session()?.Run.MarkDirty();
             if (GameRefs.IsInBattle) _session()?.Economy.MarkDirty();
         }
@@ -140,6 +141,8 @@ namespace EmberwardCoop.Sync
             var kind = DetectTopActiveModal();
             return kind == CoopModalKind.None ? "" : GetShortBadge(kind);
         }
+
+        public CoopModalKind DetectLocalTopModal() => DetectTopActiveModal();
 
         public void HandleEvtModalClosed()
         {

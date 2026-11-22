@@ -27,56 +27,76 @@ namespace EmberwardCoop.Sync
             _session = session;
         }
 
+        public byte[] CaptureBoardSnapshotBytes()
+        {
+            if (TetrisManager.Instance == null || TowerManager.Instance == null)
+                return Array.Empty<byte>();
+            using var ms = new MemoryStream(1024);
+            using var bw = new BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true);
+            WriteBoardSnapshot(bw);
+            bw.Flush();
+            return ms.ToArray();
+        }
+
+        public void ApplyBoardSnapshotBytes(byte[] data)
+        {
+            if (data == null || data.Length == 0) return;
+            using var ms = new MemoryStream(data);
+            using var br = new BinaryReader(ms, System.Text.Encoding.UTF8);
+            HandleBoardSnapshot(br);
+        }
+
         public void BroadcastBoardSnapshot(int targetPeerId = -1)
         {
             if (!_net.IsHost) return;
+            if (TetrisManager.Instance == null || TowerManager.Instance == null) return;
+
+            Action<BinaryWriter> writer = WriteBoardSnapshot;
+            if (targetPeerId >= 0) _net.SendToPeer(targetPeerId, PacketType.BoardSnapshot, writer);
+            else _net.BroadcastToClients(PacketType.BoardSnapshot, writer);
+        }
+
+        private void WriteBoardSnapshot(BinaryWriter w)
+        {
             var tm = TetrisManager.Instance;
             var twm = TowerManager.Instance;
-            if (tm == null || twm == null) return;
-
             var ownership = _session()?.Ownership;
-            var blocks = tm.GetAllTetrisOnField();
-            var towers = twm.GetAllTowersOnField();
+            var blocks = tm?.GetAllTetrisOnField();
+            var towers = twm?.GetAllTowersOnField();
             var speedCtrl = GameRefs.GetSpeedControl();
             int speedType = speedCtrl != null ? (int)speedCtrl.currentGameSpeedType : 0;
 
-            Action<BinaryWriter> writer = w =>
+            w.Write(speedType);
+
+            int bCount = blocks?.Count ?? 0;
+            w.Write(bCount);
+            for (int i = 0; i < bCount; i++)
             {
-                w.Write(speedType);
+                var b = blocks[i];
+                if (b == null) { w.Write(false); continue; }
+                w.Write(true);
+                w.Write(ownership != null ? ownership.GetBlockOwner(b) : 0);
+                w.Write((int)b.itemType);
+                w.WriteVector3(b.transform.position);
+                w.WriteVector3(b.transform.eulerAngles);
+                GameSerializers.CaptureCard(b.tetrisCardData).Write(w);
+            }
 
-                int bCount = blocks?.Count ?? 0;
-                w.Write(bCount);
-                for (int i = 0; i < bCount; i++)
-                {
-                    var b = blocks[i];
-                    if (b == null) { w.Write(false); continue; }
-                    w.Write(true);
-                    w.Write(ownership != null ? ownership.GetBlockOwner(b) : 0);
-                    w.Write((int)b.itemType);
-                    w.WriteVector3(b.transform.position);
-                    w.WriteVector3(b.transform.eulerAngles);
-                    GameSerializers.CaptureCard(b.tetrisCardData).Write(w);
-                }
-
-                int tCount = towers?.Count ?? 0;
-                w.Write(tCount);
-                for (int i = 0; i < tCount; i++)
-                {
-                    var t = towers[i];
-                    if (t == null || t.SettingData == null) { w.Write(false); continue; }
-                    w.Write(true);
-                    w.Write(ownership != null ? ownership.GetTowerOwner(t) : 0);
-                    w.Write((int)t.SettingData.itemType);
-                    w.WriteVector3(t.transform.position);
-                    w.WriteVector3(t.transform.eulerAngles);
-                    w.Write(t.Level);
-                    w.Write((int)t.UpgradeType);
-                    w.Write((int)t.TargetPriority);
-                }
-            };
-
-            if (targetPeerId >= 0) _net.SendToPeer(targetPeerId, PacketType.BoardSnapshot, writer);
-            else _net.BroadcastToClients(PacketType.BoardSnapshot, writer);
+            int tCount = towers?.Count ?? 0;
+            w.Write(tCount);
+            for (int i = 0; i < tCount; i++)
+            {
+                var t = towers[i];
+                if (t == null || t.SettingData == null) { w.Write(false); continue; }
+                w.Write(true);
+                w.Write(ownership != null ? ownership.GetTowerOwner(t) : 0);
+                w.Write((int)t.SettingData.itemType);
+                w.WriteVector3(t.transform.position);
+                w.WriteVector3(t.transform.eulerAngles);
+                w.Write(t.Level);
+                w.Write((int)t.UpgradeType);
+                w.Write((int)t.TargetPriority);
+            }
         }
 
         public void HandleBoardSnapshot(BinaryReader r)

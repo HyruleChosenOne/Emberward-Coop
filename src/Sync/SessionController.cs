@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using EmberwardCoop.Core;
@@ -6,6 +7,7 @@ using EmberwardCoop.Localization;
 using EmberwardCoop.Networking;
 using EmberwardCoop.Presence;
 using EmberwardCoop.Rules;
+using EmberwardCoop.Serialization;
 using UnityEngine;
 
 namespace EmberwardCoop.Sync
@@ -17,6 +19,7 @@ namespace EmberwardCoop.Sync
         public readonly NetworkManager Net = new NetworkManager();
         public readonly SessionSettings Settings = new SessionSettings();
         public readonly LobbySetupState LobbySetup;
+        public readonly PartyUnlockResolver Unlocks = new PartyUnlockResolver();
 
         private readonly SharedResourcesRuleset _sharedRuleset;
         private readonly SeparateResourcesRuleset _separateRuleset;
@@ -29,6 +32,7 @@ namespace EmberwardCoop.Sync
         public readonly BoardAndCombatSync Board;
         public readonly WaveAndSpeedSync Waves;
         public readonly ModalAndRewardSync Modals;
+        public readonly CoopVoteAndDraftManager Votes;
         public readonly QuestAndMetaSync Quests;
         public readonly OwnershipAndStatsTracker Ownership;
         public readonly CoopBalanceManager Balance;
@@ -69,6 +73,8 @@ namespace EmberwardCoop.Sync
             Board = new BoardAndCombatSync(Net, () => this);
             Waves = new WaveAndSpeedSync(Net, () => this);
             Modals = new ModalAndRewardSync(Net, () => this);
+            Votes = new CoopVoteAndDraftManager(Net, () => this);
+            Votes.OnMapVotesChanged += () => Run.NotifyMapVotesChanged();
             Quests = new QuestAndMetaSync(Net);
 
             Ghosts = new GhostPreviewManager(Net);
@@ -82,12 +88,21 @@ namespace EmberwardCoop.Sync
         {
             Net.Initialize(DispatchPacket);
 
+            Net.OnPeerUnlocksUpdated += () =>
+            {
+                if (Net.IsHost)
+                {
+                    RefreshPartyUnlocksAndValidateSelection(broadcast: true);
+                }
+            };
+
             Net.OnPlayerJoined += peer =>
             {
                 if (Net.IsHost)
                 {
                     Settings.OnPlayerCountChanged(Net.Roster.Count);
-                    HostBroadcastLobbySetup(LobbySetupChangeMask.SessionRules, targetPeerId: peer.PlayerId, resetReadyOnMajor: false);
+                    RefreshPartyUnlocksAndValidateSelection(broadcast: false);
+                    HostBroadcastLobbySetup(LobbySetupChangeMask.SessionRules | LobbySetupChangeMask.Unlocks, targetPeerId: peer.PlayerId, resetReadyOnMajor: false);
                     SendFullSyncToPeer(peer.PlayerId);
                     SyncHostLobbyMetadata();
                 }
@@ -98,12 +113,12 @@ namespace EmberwardCoop.Sync
             Net.OnPlayerLeft += peer =>
             {
                 Presence.RemoveRemotePlayer(peer.PlayerId);
-                Run.MapNodeVotes.Remove(peer.PlayerId);
+                Votes.OnPeerDisconnected(peer.PlayerId);
                 if (Net.IsHost)
                 {
                     Settings.OnPlayerCountChanged(Math.Max(2, Net.Roster.Count));
-                    HostBroadcastLobbySetup(LobbySetupChangeMask.SessionRules, resetReadyOnMajor: false);
-                    Run.BroadcastMapVotes();
+                    RefreshPartyUnlocksAndValidateSelection(broadcast: false);
+                    HostBroadcastLobbySetup(LobbySetupChangeMask.SessionRules | LobbySetupChangeMask.Unlocks, resetReadyOnMajor: false);
                     SyncHostLobbyMetadata();
                 }
                 OnMidWavePeerDisconnect?.Invoke(peer.Name);
@@ -115,6 +130,8 @@ namespace EmberwardCoop.Sync
                 _hostExplicitlyClosedFlag = false;
                 LobbySetup.IsLaunchingRun = false;
                 Run.MenuLockDirty = true;
+                Unlocks.RefreshLocalSummary();
+                Net.SendLocalUnlockSummary();
                 Net.SendToHost(PacketType.RequestFullSync);
             };
 
@@ -122,6 +139,7 @@ namespace EmberwardCoop.Sync
             {
                 bool unintendedDrop = !Net.LastDisconnectWasIntentional && !_hostExplicitlyClosedFlag;
                 _hostExplicitlyClosedFlag = false;
+                PartyUnlockResolver.CoopUnlockAllActive = false;
                 ResetSessionState();
                 if (unintendedDrop && GameRefs.IsInTitle)
                 {
@@ -130,9 +148,58 @@ namespace EmberwardCoop.Sync
             };
         }
 
+        public void RefreshPartyUnlocksAndValidateSelection(bool broadcast)
+        {
+            PartyUnlockResolver.CoopUnlockAllActive = Net.IsConnected && Settings.UnlockAllMapsModes;
+            Unlocks.RecomputeFromRoster(Net);
+
+            LobbySetup.SyncedPartyUnlocks = Unlocks.PartyBaseline.Clone();
+            LobbySetup.SyncedMostProgressedPlayerId = Unlocks.MostProgressedPlayerId;
+            LobbySetup.SyncedMostProgressedPlayerName = Unlocks.MostProgressedPlayerName;
+
+            if (!Net.IsHost) return;
+
+            LobbySetupChangeMask changed = LobbySetupChangeMask.Unlocks;
+
+            var validDiffs = WorldCatalog.GetPartySelectableDifficulties(Unlocks);
+            if (!validDiffs.Contains(LobbySetup.DifficultyTier))
+            {
+                LobbySetup.DifficultyTier = validDiffs.Contains(eGameDifficultyType.NORMAL)
+                    ? eGameDifficultyType.NORMAL
+                    : validDiffs[0];
+                changed |= LobbySetupChangeMask.Difficulty;
+            }
+
+            var validWorlds = WorldCatalog.GetHostSelectableWorlds(LobbySetup.DifficultyTier, Unlocks);
+            bool worldValid = false;
+            for (int i = 0; i < validWorlds.Count; i++)
+                if (validWorlds[i].WorldType == LobbySetup.SelectedWorld) { worldValid = true; break; }
+            if (!worldValid && validWorlds.Count > 0)
+            {
+                LobbySetup.SelectedWorld = validWorlds[0].WorldType;
+                changed |= LobbySetupChangeMask.World;
+            }
+
+            var validHeroes = LoadoutCatalog.GetSelectableHeroes(Unlocks);
+            if (!validHeroes.Contains(LobbySetup.HostHero))
+            {
+                LobbySetup.HostHero = validHeroes[0];
+                changed |= LobbySetupChangeMask.Hero;
+            }
+
+            if (broadcast)
+                HostBroadcastLobbySetup(changed, resetReadyOnMajor: (changed & LobbySetupChangeMask.MajorSetup) != 0);
+        }
+
         public void HostBroadcastLobbySetup(LobbySetupChangeMask changeMask, int targetPeerId = -1, bool resetReadyOnMajor = true)
         {
             if (!Net.IsHost) return;
+
+            PartyUnlockResolver.CoopUnlockAllActive = Net.IsConnected && Settings.UnlockAllMapsModes;
+            Unlocks.RecomputeFromRoster(Net);
+            LobbySetup.SyncedPartyUnlocks = Unlocks.PartyBaseline.Clone();
+            LobbySetup.SyncedMostProgressedPlayerId = Unlocks.MostProgressedPlayerId;
+            LobbySetup.SyncedMostProgressedPlayerName = Unlocks.MostProgressedPlayerName;
 
             if (targetPeerId < 0)
             {
@@ -173,6 +240,8 @@ namespace EmberwardCoop.Sync
         private void HandleLobbySetupSync(BinaryReader r)
         {
             LobbySetupChangeMask diff = LobbySetup.ReadFrom(r);
+            PartyUnlockResolver.CoopUnlockAllActive = Net.IsConnected && Settings.UnlockAllMapsModes;
+            Unlocks.ApplySyncedBaseline(LobbySetup.SyncedPartyUnlocks, LobbySetup.SyncedMostProgressedPlayerId, LobbySetup.SyncedMostProgressedPlayerName);
             OnSettingsChanged?.Invoke();
             OnLobbySetupChanged?.Invoke(diff);
 
@@ -185,13 +254,54 @@ namespace EmberwardCoop.Sync
         private void HandleSessionSettingsSync(BinaryReader r)
         {
             Settings.ReadFrom(r);
+            PartyUnlockResolver.CoopUnlockAllActive = Net.IsConnected && Settings.UnlockAllMapsModes;
             OnSettingsChanged?.Invoke();
             OnLobbySetupChanged?.Invoke(LobbySetupChangeMask.SessionRules);
+        }
+
+        public bool ValidateLoadoutsBeforeStart(out string errorMessage)
+        {
+            errorMessage = "";
+            if (LobbySetup.IsLoadRunMode)
+            {
+                if (string.IsNullOrWhiteSpace(LobbySetup.SelectedSaveId) || CoopSaveStorage.LoadSave(LobbySetup.SelectedSaveId) == null)
+                {
+                    errorMessage = CoopLoc.T("save.none_selected");
+                    return false;
+                }
+                return true;
+            }
+
+            if (LobbySetup.HostHero == eCharacterType.NONE)
+            {
+                errorMessage = CoopLoc.T("loadout.select_hero_first");
+                return false;
+            }
+
+            if (Ruleset.UsesIndividualLoadouts)
+            {
+                foreach (var kv in Net.Roster)
+                {
+                    var p = kv.Value;
+                    if (p.Loadout == null || !p.Loadout.IsValid)
+                    {
+                        errorMessage = CoopLoc.F("loadout.player_invalid", p.Name);
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
 
         public void HostLaunchCoopRun()
         {
             if (!Net.IsHost || !GameRefs.IsInTitle || LobbySetup.IsLaunchingRun) return;
+
+            if (LobbySetup.IsLoadRunMode && !string.IsNullOrWhiteSpace(LobbySetup.SelectedSaveId))
+            {
+                HostLaunchLoadedCoopRun(LobbySetup.SelectedSaveId);
+                return;
+            }
 
             int seed = LobbySetup.MasterSeed != 0
                 ? LobbySetup.MasterSeed
@@ -199,6 +309,11 @@ namespace EmberwardCoop.Sync
             if (seed == 0) seed = 424242;
 
             LobbySetup.IsLaunchingRun = true;
+            Run.ActiveCoopSaveId = CoopSaveStorage.CreateNewSaveId(LobbySetup.SelectedWorld);
+            Run.HasHydratedLocalStartLoadout = false;
+            Run.PendingRestoreBoardBytes = null;
+            Run.PendingRestoreCoin = -1;
+            PartyUnlockResolver.CoopUnlockAllActive = Settings.UnlockAllMapsModes;
 
             HostBroadcastLobbySetup(LobbySetupChangeMask.LaunchState, targetPeerId: -1, resetReadyOnMajor: false);
             Net.BroadcastToClients(PacketType.EvtStartCoopRun, w =>
@@ -206,6 +321,8 @@ namespace EmberwardCoop.Sync
                 w.Write(seed);
                 w.Write((int)LobbySetup.SelectedWorld);
                 w.Write((int)LobbySetup.DifficultyTier);
+                w.Write((int)LobbySetup.HostHero);
+                w.Write(false); // isLoadedSave
             });
 
             OnRunLaunchStarted?.Invoke();
@@ -215,8 +332,19 @@ namespace EmberwardCoop.Sync
                 var gdm = GameDataManager.instance;
                 if (gdm != null)
                 {
-                    gdm.StartNewGame(seed, LobbySetup.SelectedWorld, LobbySetup.DifficultyTier);
-                    CoopLogger.Info(LogCategory.Sync, $"Launching Co-op Run: {WorldCatalog.GetWorldDisplayName(LobbySetup.SelectedWorld)} ({LobbySetup.DifficultyTier}, Seed {seed})");
+                    // Launch onto isolated tempSession so Host's single-player active save is never touched.
+                    SoloSaveGuard.InitializeFreshTempRun(seed, LobbySetup.SelectedWorld, LobbySetup.DifficultyTier);
+
+                    var gd = gdm.GameplayData;
+                    var hostChoice = Ruleset.UsesIndividualLoadouts ? Net.LocalLoadout : LobbySetup.HostSharedLoadout;
+                    LoadoutCatalog.HydrateGameplayData(gd, LobbySetup.HostHero, hostChoice, seed, forceOverwriteInventory: true);
+                    Run.HasHydratedLocalStartLoadout = true;
+                    Run.PendingStageSeed = seed;
+
+                    // Pre-save initial co-op slot cleanly
+                    CoopSaveStorage.SaveActiveRun(this, Run.ActiveCoopSaveId, "new_run");
+
+                    CoopLogger.Info(LogCategory.Sync, $"Launching standalone Co-op Run: {WorldCatalog.GetWorldDisplayName(LobbySetup.SelectedWorld)} ({LobbySetup.DifficultyTier}, Hero {LobbySetup.HostHero}, Seed {seed})");
                     RefiUtilities.SceneLoader.Load("MapScene");
                 }
                 else
@@ -232,16 +360,115 @@ namespace EmberwardCoop.Sync
             }
         }
 
+        public void HostLaunchLoadedCoopRun(string saveId)
+        {
+            if (!Net.IsHost || !GameRefs.IsInTitle || LobbySetup.IsLaunchingRun) return;
+            var save = CoopSaveStorage.LoadSave(saveId);
+            if (save == null)
+            {
+                GameRefs.ShowGameToast(CoopLoc.T("save.load_failed"), 2.5f);
+                return;
+            }
+
+            LobbySetup.IsLaunchingRun = true;
+            CoopSaveStorage.ApplySettingsFromSave(save, Settings);
+            LobbySetup.SelectedWorld = (eWorldType)save.WorldType;
+            LobbySetup.DifficultyTier = (eGameDifficultyType)save.Difficulty;
+            LobbySetup.HostHero = save.HostHero != 0 ? (eCharacterType)save.HostHero : eCharacterType.BASIC;
+            PartyUnlockResolver.CoopUnlockAllActive = Settings.UnlockAllMapsModes;
+
+            Run.ActiveCoopSaveId = save.SaveId;
+            Run.HasHydratedLocalStartLoadout = true;
+            Run.PendingStageSeed = save.MasterSeed;
+            Run.PendingRestoreBoardBytes = !string.IsNullOrEmpty(save.BoardSnapshotBase64)
+                ? Convert.FromBase64String(save.BoardSnapshotBase64)
+                : null;
+
+            HostBroadcastLobbySetup(LobbySetupChangeMask.LaunchState | LobbySetupChangeMask.MajorSetup | LobbySetupChangeMask.SessionRules, targetPeerId: -1, resetReadyOnMajor: false);
+            Net.BroadcastToClients(PacketType.EvtStartCoopRun, w =>
+            {
+                w.Write(save.MasterSeed);
+                w.Write(save.WorldType);
+                w.Write(save.Difficulty);
+                w.Write((int)LobbySetup.HostHero);
+                w.Write(true); // isLoadedSave
+            });
+            OnRunLaunchStarted?.Invoke();
+
+            try
+            {
+                SoloSaveGuard.EnterCoopTempSession();
+                byte[] runBytes = Convert.FromBase64String(save.RunSnapshotBase64);
+                Run.ApplyRunSnapshotBytes(runBytes, loadScene: false);
+
+                // Match each connected peer to a saved player slot and restore their personal inventory.
+                var usedSlots = new HashSet<int>();
+                var gd = GameDataManager.instance?.GameplayData;
+
+                if (Net.Roster.TryGetValue(0, out var hostPeer))
+                {
+                    var hostSaved = CoopSaveStorage.MatchSavedPlayer(save, hostPeer, usedSlots);
+                    if (hostSaved != null)
+                    {
+                        CoopSaveStorage.ApplySavedInventoryToGameplay(gd, hostSaved);
+                        Run.PendingRestoreCoin = hostSaved.Coin;
+                    }
+                }
+
+                foreach (var kv in Net.Roster)
+                {
+                    if (kv.Key == 0) continue;
+                    var peerSaved = CoopSaveStorage.MatchSavedPlayer(save, kv.Value, usedSlots);
+                    if (peerSaved != null)
+                        Run.SendPeerInventoryRestore(kv.Key, peerSaved);
+                }
+
+                string targetScene = save.TargetScene == "MainGame" ? "MainGame" : "MapScene";
+                CoopLogger.Info(LogCategory.Sync, $"Resuming Co-op Save '{save.SaveId}' -> {targetScene} (Step {save.CurMapStep + 1}).");
+                RefiUtilities.SceneLoader.Load(targetScene);
+            }
+            catch (Exception ex)
+            {
+                LobbySetup.IsLaunchingRun = false;
+                CoopLogger.Error(LogCategory.Sync, "HostLaunchLoadedCoopRun failed", ex);
+            }
+        }
+
+        public bool SaveActiveCoopRun(string reason = "")
+        {
+            if (!Net.IsHost || GameRefs.IsInTitle) return false;
+            if (string.IsNullOrWhiteSpace(Run.ActiveCoopSaveId))
+                Run.ActiveCoopSaveId = CoopSaveStorage.CreateNewSaveId(LobbySetup.SelectedWorld);
+            return CoopSaveStorage.SaveActiveRun(this, Run.ActiveCoopSaveId, reason);
+        }
+
         private void HandleEvtStartCoopRun(BinaryReader r)
         {
             int seed = r.ReadInt32();
             var world = (eWorldType)r.ReadInt32();
             var diff = (eGameDifficultyType)r.ReadInt32();
+            var hero = r.BaseStream.Position < r.BaseStream.Length ? (eCharacterType)r.ReadInt32() : eCharacterType.BASIC;
+            bool isLoadedSave = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
 
             LobbySetup.SelectedWorld = world;
             LobbySetup.DifficultyTier = diff;
+            LobbySetup.HostHero = hero == eCharacterType.NONE ? eCharacterType.BASIC : hero;
             LobbySetup.IsLaunchingRun = true;
             Run.PendingStageSeed = seed;
+            Run.HasHydratedLocalStartLoadout = isLoadedSave;
+            PartyUnlockResolver.CoopUnlockAllActive = Settings.UnlockAllMapsModes;
+
+            // Ensure client starts cleanly on isolated tempSession with pre-hydrated loadout.
+            SoloSaveGuard.EnterCoopTempSession();
+            if (!isLoadedSave)
+            {
+                SoloSaveGuard.InitializeFreshTempRun(seed, world, diff);
+                var gd = GameDataManager.instance?.GameplayData;
+                var choice = Ruleset.UsesIndividualLoadouts ? Net.LocalLoadout : LobbySetup.HostSharedLoadout;
+                int peerSeed = Ruleset.UsesIndividualLoadouts ? unchecked(seed ^ (Net.LocalPlayerId * 73856093)) : seed;
+                LoadoutCatalog.HydrateGameplayData(gd, LobbySetup.HostHero, choice, peerSeed, forceOverwriteInventory: true);
+                Run.HasHydratedLocalStartLoadout = true;
+            }
 
             CoopLogger.Info(LogCategory.Sync, CoopLoc.T("lobby.launching_run"));
             OnRunLaunchStarted?.Invoke();
@@ -285,6 +512,7 @@ namespace EmberwardCoop.Sync
             Economy.ResetBattleCache();
             Waves.ResetBattleState();
             Modals.Reset();
+            Votes.Reset();
             Quests.Reset();
             Ownership.ResetRunStats();
             Balance.ResetForNewStage();
@@ -354,6 +582,14 @@ namespace EmberwardCoop.Sync
                 if (GameRefs.IsInTitle)
                 {
                     LobbySetup.IsLaunchingRun = false;
+                    Votes.ClearMapVotes();
+                    if (!Net.IsConnected)
+                        SoloSaveGuard.ExitCoopTempSession();
+                }
+                else if (GameRefs.IsInMap)
+                {
+                    Votes.ClearMapVotes();
+                    if (Net.IsHost) SaveActiveCoopRun("entered_map");
                 }
                 else if (GameRefs.IsInBattle)
                 {
@@ -376,6 +612,7 @@ namespace EmberwardCoop.Sync
             Economy.Tick(now);
             Waves.TickHostPauseState();
             Modals.Tick(now);
+            Votes.Tick(now);
             Quests.Tick(now);
             Ownership.Tick(now);
             Emotes.Tick(now, dt);
@@ -441,6 +678,7 @@ namespace EmberwardCoop.Sync
                     case PacketType.BoardSnapshot: if (Net.IsClient) Board.HandleBoardSnapshot(r); break;
                     case PacketType.EvtStateHash: if (Net.IsClient) Economy.HandleEvtStateHash(r); break;
                     case PacketType.CmdDesyncReport: if (Net.IsHost) Economy.HandleCmdDesyncReport(pkt.SenderPlayerId, r); break;
+                    case PacketType.EvtPeerInventoryRestore: if (Net.IsClient) Run.HandleEvtPeerInventoryRestore(r); break;
 
                     case PacketType.CmdPlaceTetris: if (Net.IsHost) Board.HandleCmdPlaceTetris(pkt.SenderPlayerId, r); break;
                     case PacketType.EvtPlaceTetris: if (Net.IsClient) Board.HandleEvtPlaceTetris(r); break;
@@ -477,12 +715,20 @@ namespace EmberwardCoop.Sync
                     case PacketType.EvtSetGameSpeed: if (Net.IsClient) Waves.HandleEvtSetGameSpeed(r); break;
                     case PacketType.EvtPauseState: if (Net.IsClient) Waves.HandleEvtPauseState(r); break;
 
-                    case PacketType.CmdVoteMapNode: if (Net.IsHost) Run.HandleCmdVoteMapNode(pkt.SenderPlayerId, r); break;
-                    case PacketType.EvtMapNodeVotes: if (Net.IsClient) Run.HandleEvtMapNodeVotes(r); break;
-                    case PacketType.CmdSelectMapNode: if (Net.IsHost) Run.HandleCmdSelectMapNode(pkt.SenderPlayerId, r); break;
+                    case PacketType.CmdVoteMapNode: if (Net.IsHost) Votes.HandleCmdVoteMapNode(pkt.SenderPlayerId, r); break;
+                    case PacketType.EvtMapNodeVotes: if (Net.IsClient) Votes.HandleEvtMapNodeVotes(r); break;
+                    case PacketType.CmdSelectMapNode: if (Net.IsHost) Votes.HandleCmdVoteMapNode(pkt.SenderPlayerId, r); break;
+                    case PacketType.EvtMapNodeResolved: if (Net.IsClient) Votes.HandleEvtMapNodeResolved(r); break;
                     case PacketType.EvtModalState: if (Net.IsClient) Modals.HandleEvtModalState(r); break;
                     case PacketType.EvtModalClosed: if (Net.IsClient) Modals.HandleEvtModalClosed(); break;
                     case PacketType.EvtVictoryOrDefeat: if (Net.IsClient) Modals.HandleEvtVictoryOrDefeat(r); break;
+                    case PacketType.EvtOpenPeerNodeModal: if (Net.IsClient) Votes.HandleEvtOpenPeerNodeModal(r); break;
+                    case PacketType.EvtSharedDraftState: if (Net.IsClient) Votes.HandleEvtSharedDraftState(r); break;
+                    case PacketType.CmdDraftVote: if (Net.IsHost) Votes.HandleCmdDraftVote(pkt.SenderPlayerId, r); break;
+                    case PacketType.CmdDraftReroll: if (Net.IsHost) Votes.HandleCmdDraftReroll(pkt.SenderPlayerId, r); break;
+                    case PacketType.EvtSharedDraftClosed: if (Net.IsClient) Votes.HandleEvtSharedDraftClosed(); break;
+                    case PacketType.CmdDraftBarrierState: if (Net.IsHost) Votes.HandleCmdDraftBarrierState(pkt.SenderPlayerId, r); break;
+                    case PacketType.EvtDraftBarrierState: if (Net.IsClient) Votes.HandleEvtDraftBarrierState(r); break;
 
                     case PacketType.EvtQuestSnapshot: if (Net.IsClient) Quests.HandleEvtQuestSnapshot(r); break;
                     case PacketType.EvtQuestProgress: if (Net.IsClient) Quests.HandleEvtQuestProgress(r); break;

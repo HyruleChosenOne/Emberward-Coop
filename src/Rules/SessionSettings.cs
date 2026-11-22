@@ -70,6 +70,11 @@ namespace EmberwardCoop.Rules
         public int GiftPerWaveCap = 0; // 0 = unlimited
         public DraftSyncMode DraftMode = DraftSyncMode.SimultaneousIndependent;
         public SpeedControlRule SpeedControl = SpeedControlRule.AnyPlayer;
+        public bool SharedLoadoutsInSharedMode = true;
+        public bool UnlockAllMapsModes = false;
+
+        public bool UsesIndividualLoadouts =>
+            EconomyMode == CoopEconomyMode.SeparateResources || !SharedLoadoutsInSharedMode;
 
         public void ApplyPreset(SessionPreset preset, int playerCount)
         {
@@ -172,6 +177,8 @@ namespace EmberwardCoop.Rules
             w.Write(GiftPerWaveCap);
             w.Write((byte)DraftMode);
             w.Write((byte)SpeedControl);
+            w.Write(SharedLoadoutsInSharedMode);
+            w.Write(UnlockAllMapsModes);
         }
 
         public void ReadFrom(BinaryReader r)
@@ -192,6 +199,8 @@ namespace EmberwardCoop.Rules
             GiftPerWaveCap = Math.Max(0, r.ReadInt32());
             DraftMode = (DraftSyncMode)r.ReadByte();
             SpeedControl = (SpeedControlRule)r.ReadByte();
+            SharedLoadoutsInSharedMode = r.BaseStream.Position < r.BaseStream.Length ? r.ReadBoolean() : true;
+            UnlockAllMapsModes = r.BaseStream.Position < r.BaseStream.Length && r.ReadBoolean();
         }
 
         public string GetCompactSummary()

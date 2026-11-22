@@ -283,10 +283,69 @@ namespace EmberwardCoop.Patches
                 }
 
                 CoopLogger.Info(LogCategory.UI, "Injected native CO-OP SETTINGS button into UI_PauseMenu.");
+
+                InjectHostSaveButton(__instance, parent);
             }
             catch (Exception ex)
             {
                 CoopLogger.Warn(LogCategory.UI, $"Could not inject Pause Menu Co-op button: {ex.Message}");
+            }
+        }
+
+        private static void InjectHostSaveButton(UI_PauseMenu menu, Transform parent)
+        {
+            var s = Sync.SessionController.Instance;
+            bool showSave = s != null && s.Net.IsHost && !GameRefs.IsInTitle;
+
+            Transform existing = parent.Find("Button_CoopSaveRun");
+            if (existing != null)
+            {
+                existing.gameObject.SetActive(showSave);
+                var tmps = existing.GetComponentsInChildren<TMP_Text>(true);
+                for (int i = 0; i < tmps.Length; i++)
+                    if (tmps[i] != null) tmps[i].text = CoopLoc.T("save.pause_save_btn");
+                return;
+            }
+
+            if (!showSave) return;
+
+            var clone = UnityEngine.Object.Instantiate(menu.button_Settings.gameObject, parent, false);
+            clone.name = "Button_CoopSaveRun";
+            clone.SetActive(true);
+            clone.transform.SetSiblingIndex(menu.button_Settings.transform.GetSiblingIndex() + 2);
+
+            var mbs = clone.GetComponentsInChildren<MonoBehaviour>(true);
+            for (int i = 0; i < mbs.Length; i++)
+            {
+                if (mbs[i] == null) continue;
+                string tn = mbs[i].GetIl2CppType()?.Name ?? "";
+                if (tn.IndexOf("Localiz", StringComparison.OrdinalIgnoreCase) >= 0)
+                    UnityEngine.Object.Destroy(mbs[i]);
+            }
+
+            var btn = clone.GetComponent<Button>();
+            if (btn != null)
+            {
+                btn.onClick = new Button.ButtonClickedEvent();
+                btn.onClick.AddListener((UnityAction)(() =>
+                {
+                    NativeStyleProvider.PlayUiSelectSound();
+                    if (Sync.SessionController.Instance?.SaveActiveCoopRun("manual_pause") == true)
+                        GameRefs.ShowGameToast(CoopLoc.T("save.saved_toast"), 2.5f);
+                }));
+                btn.interactable = true;
+            }
+
+            var lbls = clone.GetComponentsInChildren<TMP_Text>(true);
+            for (int i = 0; i < lbls.Length; i++)
+            {
+                if (lbls[i] == null) continue;
+                lbls[i].text = CoopLoc.T("save.pause_save_btn");
+                lbls[i].color = NativeStyleProvider.StatusReady;
+                lbls[i].enableAutoSizing = true;
+                lbls[i].fontSizeMin = 12f;
+                lbls[i].fontSizeMax = Mathf.Max(16f, lbls[i].fontSize);
+                lbls[i].overflowMode = TextOverflowModes.Ellipsis;
             }
         }
     }

@@ -5,6 +5,7 @@ using EmberwardCoop.Core;
 using EmberwardCoop.Localization;
 using EmberwardCoop.Networking;
 using EmberwardCoop.Rules;
+using EmberwardCoop.Serialization;
 using EmberwardCoop.Sync;
 using TMPro;
 using UnityEngine;
@@ -51,6 +52,45 @@ namespace EmberwardCoop.UI
         private LayoutElement _avatarScrollLe;
         private TMP_Text _avatarHoverLabel;
         private readonly List<(string heroId, string displayName, RectTransform rt)> _avatarTileRects = new List<(string, string, RectTransform)>();
+
+        private GameObject _loadoutModalRoot;
+        private RectTransform _loadoutCardRt;
+        private CanvasGroup _loadoutCardCg;
+        private float _loadoutAnimProgress = 1f;
+        private bool _editingSharedLoadout;
+        private PlayerLoadoutChoice _draftLoadout = new PlayerLoadoutChoice();
+        private TMP_Text _loadoutTitleText;
+        private TMP_Text _loadoutCountText;
+        private Transform _loadoutTowersContent;
+        private Transform _loadoutBlocksContent;
+
+        private GameObject _runModeSwitchRow;
+        private Image _runTabNewBg;
+        private Image _runTabLoadBg;
+        private GameObject _newRunSetupGroup;
+        private GameObject _loadRunCard;
+        private Transform _saveListRoot;
+        private LayoutElement _saveScrollLe;
+        private TMP_Text _clientLoadSaveSummaryText;
+        private GameObject _hostSaveListContainer;
+        private List<CoopSaveFile> _cachedCoopSaves = new List<CoopSaveFile>();
+
+        private Image _heroCardBg;
+        private Image _hostHeroPortrait;
+        private TMP_Text _hostHeroNameText;
+        private TMP_Text _hostHeroTraitsText;
+        private GameObject _heroPrevBtnObj;
+        private GameObject _heroNextBtnObj;
+        private GameObject _sharedLoadoutBtnObj;
+        private GameObject _sharedLoadoutToggleRow;
+        private TMP_Text _sharedLoadoutToggleLabel;
+        private Image _sharedLoadoutToggleBg;
+
+        private TMP_Text _worldUnlockNoteText;
+        private TMP_Text _diffUnlockNoteText;
+        private GameObject _unlockAllBtnObj;
+        private Image _unlockAllBtnBg;
+        private TMP_Text _unlockAllBtnLabel;
 
         private LayoutElement _steamScrollLe;
         private LayoutElement _lanScrollLe;
@@ -148,6 +188,8 @@ namespace EmberwardCoop.UI
         private TMP_Text _lblDraftSync;
         private TMP_Text _lblSpeedCtrl;
         private TMP_Text _lblAutoScale;
+        private TMP_Text _lblSharedLoadouts;
+        private TMP_Text _lblUnlockAll;
         private readonly List<Button> _hostOnlySettingButtons = new List<Button>();
 
         private float _modePulseTimer;
@@ -216,6 +258,8 @@ namespace EmberwardCoop.UI
             _dirty = true;
             TitleMenuIntegration.SetMainMenuButtonsVisible(false);
             RefreshSavedPresetsList();
+            RefreshCoopSavesList();
+            _session.Unlocks.RefreshLocalSummary();
             if (!Net.IsConnected)
             {
                 bool steamReady = SteamP2PTransport.IsSteamReady();
@@ -265,6 +309,7 @@ namespace EmberwardCoop.UI
         {
             if (_settingsModalRoot != null) _settingsModalRoot.SetActive(false);
             if (_avatarPickerModalRoot != null) _avatarPickerModalRoot.SetActive(false);
+            if (_loadoutModalRoot != null) _loadoutModalRoot.SetActive(false);
             if (_overrideDialogRoot != null) _overrideDialogRoot.SetActive(false);
             if (_hostClosedDialogRoot != null) _hostClosedDialogRoot.SetActive(false);
         }
@@ -288,6 +333,8 @@ namespace EmberwardCoop.UI
                 NativeStyleProvider.TickOpenTransition(_avatarPickerCardRt, _avatarPickerCardCg, ref _avatarPickerAnimProgress, dt, 0.11f);
                 UpdateAvatarPickerHoverCaption();
             }
+            if (_loadoutModalRoot != null && _loadoutModalRoot.activeSelf)
+                NativeStyleProvider.TickOpenTransition(_loadoutCardRt, _loadoutCardCg, ref _loadoutAnimProgress, dt, 0.11f);
 
             if (Input.GetKeyDown(KeyCode.Escape) && !(CoopSettingsModal.Instance?.IsOpen ?? false))
             {
@@ -295,6 +342,11 @@ namespace EmberwardCoop.UI
                     _hostClosedDialogRoot.SetActive(false);
                 else if (_overrideDialogRoot != null && _overrideDialogRoot.activeSelf)
                     _overrideDialogRoot.SetActive(false);
+                else if (_loadoutModalRoot != null && _loadoutModalRoot.activeSelf)
+                {
+                    _loadoutModalRoot.SetActive(false);
+                    NativeStyleProvider.PlayUiOpenSound(false);
+                }
                 else if (_avatarPickerModalRoot != null && _avatarPickerModalRoot.activeSelf)
                 {
                     _avatarPickerModalRoot.SetActive(false);
@@ -451,6 +503,7 @@ namespace EmberwardCoop.UI
             BuildConnectedLobbySection(window.transform);
             BuildSessionSettingsModal(_root.transform);
             BuildAvatarPickerModal(_root.transform);
+            BuildLoadoutPickerModal(_root.transform);
             BuildStartOverrideDialog(_root.transform);
             BuildHostClosedDialog(_root.transform);
 
@@ -685,11 +738,57 @@ namespace EmberwardCoop.UI
             NativeStyleProvider.StretchFill(roTxt.rectTransform, 6f, 2f);
             _clientReadOnlyBadgeObj = roBadge;
 
-            var modeCard = NativeStyleProvider.CreatePanel(leftCol.transform, "CoopModeCard", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
+            // New Run / Load Co-op Run selector (Host controls; Clients view synced status)
+            _runModeSwitchRow = CreateRow(leftCol.transform, "RunSourceTabs", 28f, 6f);
+            var newRunBtn = CreateLocButton(_runModeSwitchRow.transform, "save.tab_new_run", EmberwardTheme.TabActive, () => HostSetLoadRunMode(false), 12f, 28f, isTab: true);
+            newRunBtn.GetComponent<LayoutElement>().flexibleWidth = 1f;
+            _runTabNewBg = newRunBtn.GetComponent<Image>();
+
+            var loadRunBtn = CreateLocButton(_runModeSwitchRow.transform, "save.tab_load_run", EmberwardTheme.TabInactive, () => HostSetLoadRunMode(true), 12f, 28f, isTab: true);
+            loadRunBtn.GetComponent<LayoutElement>().flexibleWidth = 1f;
+            _runTabLoadBg = loadRunBtn.GetComponent<Image>();
+
+            // Load Co-op Save Panel
+            _loadRunCard = NativeStyleProvider.CreatePanel(leftCol.transform, "LoadCoopSaveCard", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
+            var lrv = _loadRunCard.AddComponent<VerticalLayoutGroup>();
+            lrv.padding = new RectOffset(10, 10, 8, 8);
+            lrv.spacing = 6f;
+            lrv.childControlWidth = true;
+            lrv.childControlHeight = true;
+            lrv.childForceExpandWidth = true;
+            lrv.childForceExpandHeight = false;
+
+            var saveHdr = CreateRow(_loadRunCard.transform, "SaveListHdr", 24f, 6f);
+            var saveTitle = BindLoc(NativeStyleProvider.CreateLabel(saveHdr.transform, "", 12f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true), "save.list_title");
+            saveTitle.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            var saveRefBtn = CreateLocButton(saveHdr.transform, "lobby.refresh", NativeStyleProvider.ButtonSecondary, () => { RefreshCoopSavesList(); _dirty = true; }, 11f, 24f);
+            saveRefBtn.GetComponent<LayoutElement>().preferredWidth = 86f;
+
+            _clientLoadSaveSummaryText = NativeStyleProvider.CreateLabel(_loadRunCard.transform, "", 12.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.TopLeft, FontStyles.Bold, wordWrap: true);
+
+            var saveScroll = NativeStyleProvider.CreateScrollView(_loadRunCard.transform, "CoopSavesScroll", NativeStyleProvider.PanelWellBg, out RectTransform saveContent, padding: 6f, spacing: 5f);
+            _saveScrollLe = saveScroll.gameObject.AddComponent<LayoutElement>();
+            _saveScrollLe.minHeight = 90f;
+            _saveScrollLe.preferredHeight = 230f;
+            _saveListRoot = saveContent;
+            _hostSaveListContainer = saveScroll.gameObject;
+            _loadRunCard.SetActive(false);
+
+            // New Run Setup Group (contains Mode, Host Hero, World, Difficulty/Rules)
+            _newRunSetupGroup = new GameObject("NewRunSetupGroup");
+            _newRunSetupGroup.transform.SetParent(leftCol.transform, false);
+            var nrv = _newRunSetupGroup.AddComponent<VerticalLayoutGroup>();
+            nrv.spacing = 6f;
+            nrv.childControlWidth = true;
+            nrv.childControlHeight = true;
+            nrv.childForceExpandWidth = true;
+            nrv.childForceExpandHeight = false;
+
+            var modeCard = NativeStyleProvider.CreatePanel(_newRunSetupGroup.transform, "CoopModeCard", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
             _modeCardBg = modeCard.GetComponent<Image>();
             var mv = modeCard.AddComponent<VerticalLayoutGroup>();
-            mv.padding = new RectOffset(10, 10, 7, 8);
-            mv.spacing = 5f;
+            mv.padding = new RectOffset(10, 10, 6, 7);
+            mv.spacing = 4f;
             mv.childControlWidth = true;
             mv.childControlHeight = true;
             mv.childForceExpandWidth = true;
@@ -697,23 +796,79 @@ namespace EmberwardCoop.UI
 
             BindLoc(NativeStyleProvider.CreateLabel(modeCard.transform, "", 11.5f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true), "lobby.mode_label");
 
-            _hostModeButtonsRow = CreateRow(modeCard.transform, "HostModeRow", 32f, 8f);
-            var sharedBtn = CreateLocButton(_hostModeButtonsRow.transform, "lobby.mode_shared", NativeStyleProvider.ButtonPrimary, () => HostSetEconomyMode(CoopEconomyMode.SharedResources), 12f, 32f);
+            _hostModeButtonsRow = CreateRow(modeCard.transform, "HostModeRow", 30f, 8f);
+            var sharedBtn = CreateLocButton(_hostModeButtonsRow.transform, "lobby.mode_shared", NativeStyleProvider.ButtonPrimary, () => HostSetEconomyMode(CoopEconomyMode.SharedResources), 12f, 30f);
             sharedBtn.GetComponent<LayoutElement>().flexibleWidth = 1f;
             _modeSharedBg = sharedBtn.GetComponent<Image>();
 
-            var separateBtn = CreateLocButton(_hostModeButtonsRow.transform, "lobby.mode_separate", NativeStyleProvider.ButtonSecondary, () => HostSetEconomyMode(CoopEconomyMode.SeparateResources), 12f, 32f);
+            var separateBtn = CreateLocButton(_hostModeButtonsRow.transform, "lobby.mode_separate", NativeStyleProvider.ButtonSecondary, () => HostSetEconomyMode(CoopEconomyMode.SeparateResources), 12f, 30f);
             separateBtn.GetComponent<LayoutElement>().flexibleWidth = 1f;
             _modeSeparateBg = separateBtn.GetComponent<Image>();
 
             _clientModeReadOnlyRow = NativeStyleProvider.CreatePanel(modeCard.transform, "ClientModePill", NativeStyleProvider.CardBg, addBorder: false, isSubPanel: true, roleOverride: PanelSurfaceRole.Card);
-            _clientModeReadOnlyRow.AddComponent<LayoutElement>().preferredHeight = 28f;
+            _clientModeReadOnlyRow.AddComponent<LayoutElement>().preferredHeight = 26f;
             _clientModeReadOnlyText = NativeStyleProvider.CreateLabel(_clientModeReadOnlyRow.transform, "", 13f, NativeStyleProvider.EmberGold, TextAlignmentOptions.Center, FontStyles.Bold, autoSize: true, minFontSize: 10.5f, addShadow: true);
             NativeStyleProvider.StretchFill(_clientModeReadOnlyText.rectTransform, 8f, 2f);
 
-            _modeRulesDescText = NativeStyleProvider.CreateLabel(modeCard.transform, "", 11.5f, NativeStyleProvider.TextMuted, TextAlignmentOptions.TopLeft, wordWrap: true);
+            _sharedLoadoutToggleRow = CreateRow(modeCard.transform, "SharedLoadoutToggleRow", 24f, 6f);
+            var slLbl = BindLoc(NativeStyleProvider.CreateLabel(_sharedLoadoutToggleRow.transform, "", 11.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, FontStyles.Bold), "settings.shared_loadouts");
+            slLbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            var slBtn = NativeStyleProvider.CreateButton(_sharedLoadoutToggleRow.transform, "", NativeStyleProvider.ButtonSuccess, () =>
+            {
+                if (!Net.IsHost || Setup.IsLaunchingRun) return;
+                Settings.SharedLoadoutsInSharedMode = !Settings.SharedLoadoutsInSharedMode;
+                _session.HostBroadcastLobbySetup(LobbySetupChangeMask.SessionRules | LobbySetupChangeMask.CoopMode);
+            }, 11f, 23f);
+            slBtn.GetComponent<LayoutElement>().preferredWidth = 166f;
+            _sharedLoadoutToggleBg = slBtn.GetComponent<Image>();
+            _sharedLoadoutToggleLabel = slBtn.GetComponentInChildren<TMP_Text>();
+            _hostOnlySettingButtons.Add(slBtn);
 
-            var worldCard = NativeStyleProvider.CreatePanel(leftCol.transform, "LevelPreviewCard", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
+            _modeRulesDescText = NativeStyleProvider.CreateLabel(modeCard.transform, "", 11f, NativeStyleProvider.TextMuted, TextAlignmentOptions.TopLeft, wordWrap: true);
+
+            // Host Run Hero Selector Card (Universal in both Shared and Separate modes)
+            var heroCard = NativeStyleProvider.CreatePanel(_newRunSetupGroup.transform, "HostHeroCard", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
+            _heroCardBg = heroCard.GetComponent<Image>();
+            var hv = heroCard.AddComponent<HorizontalLayoutGroup>();
+            hv.padding = new RectOffset(10, 10, 6, 6);
+            hv.spacing = 8f;
+            hv.childAlignment = TextAnchor.MiddleLeft;
+            hv.childControlWidth = true;
+            hv.childControlHeight = true;
+            hv.childForceExpandWidth = false;
+
+            var heroAv = NativeStyleProvider.CreateHeroAvatarWidget(heroCard.transform, Setup.HostHero.ToString(), Color.white, 42f, clickable: false);
+            var hMask = heroAv.transform.Find("PortraitMask/Portrait");
+            if (hMask != null) _hostHeroPortrait = hMask.GetComponent<Image>();
+
+            var heroInfoCol = new GameObject("HeroInfo");
+            heroInfoCol.transform.SetParent(heroCard.transform, false);
+            heroInfoCol.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            var hiv = heroInfoCol.AddComponent<VerticalLayoutGroup>();
+            hiv.spacing = 1f;
+            hiv.childControlWidth = true;
+            hiv.childControlHeight = true;
+            hiv.childForceExpandWidth = true;
+            hiv.childForceExpandHeight = false;
+
+            BindLoc(NativeStyleProvider.CreateLabel(heroInfoCol.transform, "", 10.5f, NativeStyleProvider.TextMuted, TextAlignmentOptions.MidlineLeft, FontStyles.Bold), "lobby.host_hero_label");
+            _hostHeroNameText = NativeStyleProvider.CreateLabel(heroInfoCol.transform, "", 14f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true);
+            _hostHeroTraitsText = NativeStyleProvider.CreateLabel(heroInfoCol.transform, "", 10.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, wordWrap: false);
+            _hostHeroTraitsText.overflowMode = TextOverflowModes.Ellipsis;
+
+            var hPrev = NativeStyleProvider.CreateButton(heroCard.transform, "<", NativeStyleProvider.ButtonSecondary, () => HostCycleHero(-1), 13.5f, 26f);
+            hPrev.GetComponent<LayoutElement>().preferredWidth = 28f;
+            _heroPrevBtnObj = hPrev.gameObject;
+
+            var hNext = NativeStyleProvider.CreateButton(heroCard.transform, ">", NativeStyleProvider.ButtonSecondary, () => HostCycleHero(1), 13.5f, 26f);
+            hNext.GetComponent<LayoutElement>().preferredWidth = 28f;
+            _heroNextBtnObj = hNext.gameObject;
+
+            var sharedLdBtn = CreateLocButton(heroCard.transform, "loadout.edit_shared_btn", NativeStyleProvider.ButtonPrimary, () => OpenLoadoutPicker(sharedForHost: true), 11f, 26f);
+            sharedLdBtn.GetComponent<LayoutElement>().preferredWidth = 116f;
+            _sharedLoadoutBtnObj = sharedLdBtn.gameObject;
+
+            var worldCard = NativeStyleProvider.CreatePanel(_newRunSetupGroup.transform, "LevelPreviewCard", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
             _worldCardBg = worldCard.GetComponent<Image>();
             var wv = worldCard.AddComponent<VerticalLayoutGroup>();
             wv.padding = new RectOffset(10, 10, 7, 8);
@@ -747,7 +902,7 @@ namespace EmberwardCoop.UI
 
             var thumbFrame = NativeStyleProvider.CreatePanel(previewBody.transform, "BiomeThumb", NativeStyleProvider.PanelWellBg, addBorder: false, isSubPanel: true, roleOverride: PanelSurfaceRole.Well);
             var tle = thumbFrame.AddComponent<LayoutElement>();
-            tle.minWidth = 176f; tle.preferredWidth = 176f; tle.minHeight = 96f; tle.preferredHeight = 96f;
+            tle.minWidth = 154f; tle.preferredWidth = 154f; tle.minHeight = 82f; tle.preferredHeight = 82f;
 
             var thumbImgGo = new GameObject("BannerSprite");
             thumbImgGo.transform.SetParent(thumbFrame.transform, false);
@@ -761,18 +916,19 @@ namespace EmberwardCoop.UI
             metaCol.transform.SetParent(previewBody.transform, false);
             metaCol.AddComponent<LayoutElement>().flexibleWidth = 1f;
             var metaV = metaCol.AddComponent<VerticalLayoutGroup>();
-            metaV.spacing = 3f;
+            metaV.spacing = 2f;
             metaV.childControlWidth = true;
             metaV.childControlHeight = true;
             metaV.childForceExpandWidth = true;
             metaV.childForceExpandHeight = false;
 
-            _worldNameText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 15.5f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, autoSize: true, minFontSize: 12f, addShadow: true);
-            _worldMetaBadgeText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 11f, new Color(0.68f, 0.90f, 0.96f, 1f), TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
-            _worldDescText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 11.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.TopLeft, wordWrap: true);
-            _worldHazardsText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 11f, NativeStyleProvider.EmberOrange, TextAlignmentOptions.TopLeft, FontStyles.Bold, wordWrap: true);
+            _worldNameText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 15f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, autoSize: true, minFontSize: 12f, addShadow: true);
+            _worldUnlockNoteText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 10.5f, NativeStyleProvider.StatusReady, TextAlignmentOptions.MidlineLeft, FontStyles.Italic);
+            _worldMetaBadgeText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 10.5f, new Color(0.68f, 0.90f, 0.96f, 1f), TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
+            _worldDescText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 11f, NativeStyleProvider.TextLight, TextAlignmentOptions.TopLeft, wordWrap: true);
+            _worldHazardsText = NativeStyleProvider.CreateLabel(metaCol.transform, "", 10.5f, NativeStyleProvider.EmberOrange, TextAlignmentOptions.TopLeft, FontStyles.Bold, wordWrap: true);
 
-            var rulesCard = NativeStyleProvider.CreatePanel(leftCol.transform, "DifficultyRulesCard", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
+            var rulesCard = NativeStyleProvider.CreatePanel(_newRunSetupGroup.transform, "DifficultyRulesCard", NativeStyleProvider.PanelSubBg, addBorder: false, isSubPanel: true);
             _rulesCardBg = rulesCard.GetComponent<Image>();
             var rv = rulesCard.AddComponent<VerticalLayoutGroup>();
             rv.padding = new RectOffset(10, 10, 7, 8);
@@ -811,13 +967,24 @@ namespace EmberwardCoop.UI
             rmLe.minWidth = 144f; rmLe.preferredWidth = 166f;
             _openRulesBtnLabel = rulesModalBtn.GetComponentInChildren<TMP_Text>();
 
+            var unlockRow = CreateRow(rulesCard.transform, "UnlockMetaRow", 24f, 6f);
+            _diffUnlockNoteText = NativeStyleProvider.CreateLabel(unlockRow.transform, "", 10.5f, NativeStyleProvider.StatusReady, TextAlignmentOptions.MidlineLeft, FontStyles.Italic);
+            _diffUnlockNoteText.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+
+            var unlockAllBtn = NativeStyleProvider.CreateButton(unlockRow.transform, "", NativeStyleProvider.ButtonSecondary, HostToggleUnlockAllMapsModes, 10.5f, 23f);
+            unlockAllBtn.GetComponent<LayoutElement>().preferredWidth = 228f;
+            _unlockAllBtnObj = unlockAllBtn.gameObject;
+            _unlockAllBtnBg = unlockAllBtn.GetComponent<Image>();
+            _unlockAllBtnLabel = unlockAllBtn.GetComponentInChildren<TMP_Text>();
+            _hostOnlySettingButtons.Add(unlockAllBtn);
+
             BindLoc(NativeStyleProvider.CreateLabel(rulesCard.transform, "", 11f, NativeStyleProvider.TextMuted, TextAlignmentOptions.MidlineLeft, FontStyles.Bold), "lobby.active_rules_title");
 
-            var rulesScroll = NativeStyleProvider.CreateScrollView(rulesCard.transform, "ActiveRulesScroll", NativeStyleProvider.PanelWellBg, out RectTransform rulesContent, padding: 7f, spacing: 3f, addBorder: false);
+            var rulesScroll = NativeStyleProvider.CreateScrollView(rulesCard.transform, "ActiveRulesScroll", NativeStyleProvider.PanelWellBg, out RectTransform rulesContent, padding: 6f, spacing: 3f, addBorder: false);
             var rsLe = rulesScroll.gameObject.AddComponent<LayoutElement>();
-            rsLe.minHeight = 46f;
-            rsLe.preferredHeight = 58f;
-            _activeRulesSummaryText = NativeStyleProvider.CreateLabel(rulesContent, "", 12f, NativeStyleProvider.TextLight, TextAlignmentOptions.TopLeft, wordWrap: true);
+            rsLe.minHeight = 38f;
+            rsLe.preferredHeight = 46f;
+            _activeRulesSummaryText = NativeStyleProvider.CreateLabel(rulesContent, "", 11.5f, NativeStyleProvider.TextLight, TextAlignmentOptions.TopLeft, wordWrap: true);
         }
 
         private void BuildRightPartyColumn(Transform parent)
@@ -1086,6 +1253,7 @@ namespace EmberwardCoop.UI
                 if (Settings.AutoScaleByPlayerCount) Settings.OnPlayerCountChanged(Math.Max(2, Net.Roster.Count));
                 BroadcastRulesChange(LobbySetupChangeMask.SessionRules);
             });
+            _lblUnlockAll = AddToggleRow(leftCol.transform, "settings.unlock_all_maps", HostToggleUnlockAllMapsModes);
 
             _lblStartGold = AddToggleRow(rightCol.transform, "settings.start_gold", () =>
             {
@@ -1122,6 +1290,11 @@ namespace EmberwardCoop.UI
             _lblSpeedCtrl = AddToggleRow(rightCol.transform, "settings.speed_ctrl", () =>
             {
                 Settings.SpeedControl = Settings.SpeedControl == SpeedControlRule.AnyPlayer ? SpeedControlRule.HostOnly : SpeedControlRule.AnyPlayer;
+                MarkCustomAndBroadcast();
+            });
+            _lblSharedLoadouts = AddToggleRow(rightCol.transform, "settings.shared_loadouts", () =>
+            {
+                Settings.SharedLoadoutsInSharedMode = !Settings.SharedLoadoutsInSharedMode;
                 MarkCustomAndBroadcast();
             });
 
@@ -1322,6 +1495,235 @@ namespace EmberwardCoop.UI
             _avatarHoverLabel.text = CoopLoc.F("lobby.avatar_selected", current.DisplayName);
         }
 
+        private void BuildLoadoutPickerModal(Transform parent)
+        {
+            _loadoutModalRoot = new GameObject("LoadoutPickerModal");
+            _loadoutModalRoot.transform.SetParent(parent, false);
+            NativeStyleProvider.StretchFill(_loadoutModalRoot.AddComponent<RectTransform>());
+            _loadoutModalRoot.AddComponent<Image>().color = EmberwardTheme.ModalScrim;
+
+            var card = NativeStyleProvider.CreatePanel(_loadoutModalRoot.transform, "LoadoutCard", NativeStyleProvider.PanelBg, addBorder: true, roleOverride: PanelSurfaceRole.Window);
+            _loadoutCardRt = card.GetComponent<RectTransform>();
+            _loadoutCardRt.anchorMin = new Vector2(0.5f, 0.5f);
+            _loadoutCardRt.anchorMax = new Vector2(0.5f, 0.5f);
+            _loadoutCardRt.sizeDelta = new Vector2(720f, 470f);
+            _loadoutCardCg = card.AddComponent<CanvasGroup>();
+
+            var fit = card.AddComponent<ContentSizeFitter>();
+            fit.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var vlg = card.AddComponent<VerticalLayoutGroup>();
+            vlg.padding = new RectOffset(18, 18, 15, 16);
+            vlg.spacing = 7f;
+            vlg.childControlWidth = true;
+            vlg.childControlHeight = true;
+            vlg.childForceExpandWidth = true;
+            vlg.childForceExpandHeight = false;
+
+            var hdr = CreateRow(card.transform, "LoadoutHdr", 30f, 8f);
+            _loadoutTitleText = NativeStyleProvider.CreateLabel(hdr.transform, CoopLoc.T("loadout.modal_title"), 16.5f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, autoSize: true, minFontSize: 13f, addShadow: true);
+            _loadoutTitleText.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+            NativeStyleProvider.CreateCloseButton(hdr.transform, () => _loadoutModalRoot.SetActive(false), 26f);
+
+            var topBar = CreateRow(card.transform, "LoadoutTopBar", 28f, 8f);
+            _loadoutCountText = NativeStyleProvider.CreateLabel(topBar.transform, "", 12f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
+            _loadoutCountText.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+
+            var defaultBtn = CreateLocButton(topBar.transform, "loadout.use_hero_default", NativeStyleProvider.ButtonSecondary, () =>
+            {
+                _draftLoadout = LoadoutCatalog.BuildHeroDefaultLoadout(Setup.HostHero, 1337);
+                _draftLoadout.UseHeroDefault = true;
+                RebuildLoadoutModalGrids();
+            }, 11.5f, 26f);
+            defaultBtn.GetComponent<LayoutElement>().preferredWidth = 186f;
+
+            BindLoc(NativeStyleProvider.CreateLabel(card.transform, "", 12f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold), "loadout.towers_header");
+            var tScroll = NativeStyleProvider.CreateScrollView(card.transform, "TowersScroll", NativeStyleProvider.PanelWellBg, out RectTransform tContent, padding: 6f, spacing: 6f);
+            var tLe = tScroll.gameObject.AddComponent<LayoutElement>();
+            tLe.minHeight = 148f; tLe.preferredHeight = 166f;
+            var oldTv = tContent.GetComponent<VerticalLayoutGroup>();
+            if (oldTv != null) UnityEngine.Object.DestroyImmediate(oldTv);
+            var tGrid = tContent.gameObject.AddComponent<GridLayoutGroup>();
+            tGrid.padding = new RectOffset(6, 6, 6, 6);
+            tGrid.cellSize = new Vector2(154f, 38f);
+            tGrid.spacing = new Vector2(6f, 5f);
+            tGrid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            tGrid.constraintCount = 4;
+            _loadoutTowersContent = tContent;
+
+            BindLoc(NativeStyleProvider.CreateLabel(card.transform, "", 12f, NativeStyleProvider.EmberGold, TextAlignmentOptions.MidlineLeft, FontStyles.Bold), "loadout.blocks_header");
+            var bScroll = NativeStyleProvider.CreateScrollView(card.transform, "BlocksScroll", NativeStyleProvider.PanelWellBg, out RectTransform bContent, padding: 6f, spacing: 6f);
+            var bLe = bScroll.gameObject.AddComponent<LayoutElement>();
+            bLe.minHeight = 114f; bLe.preferredHeight = 128f;
+            var oldBv = bContent.GetComponent<VerticalLayoutGroup>();
+            if (oldBv != null) UnityEngine.Object.DestroyImmediate(oldBv);
+            var bGrid = bContent.gameObject.AddComponent<GridLayoutGroup>();
+            bGrid.padding = new RectOffset(6, 6, 6, 6);
+            bGrid.cellSize = new Vector2(154f, 34f);
+            bGrid.spacing = new Vector2(6f, 5f);
+            bGrid.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+            bGrid.constraintCount = 4;
+            _loadoutBlocksContent = bContent;
+
+            var foot = CreateRow(card.transform, "LoadoutFoot", 34f, 8f);
+            var cancelBtn = CreateLocButton(foot.transform, "lobby.cancel", NativeStyleProvider.ButtonSecondary, () => _loadoutModalRoot.SetActive(false), 12.5f, 32f);
+            cancelBtn.GetComponent<LayoutElement>().flexibleWidth = 1f;
+
+            var confirmBtn = CreateLocButton(foot.transform, "loadout.confirm_btn", NativeStyleProvider.ButtonSuccess, ConfirmDraftLoadout, 13f, 32f);
+            confirmBtn.GetComponent<LayoutElement>().flexibleWidth = 1.4f;
+
+            _loadoutModalRoot.SetActive(false);
+        }
+
+        private void OpenLoadoutPicker(bool sharedForHost)
+        {
+            if (_loadoutModalRoot == null) return;
+            _editingSharedLoadout = sharedForHost;
+            var src = sharedForHost ? Setup.HostSharedLoadout : Net.LocalLoadout;
+            _draftLoadout = LoadoutCatalog.ResolveEffectiveLoadout(src, Setup.HostHero, 1337);
+            _draftLoadout.UseHeroDefault = src == null || src.UseHeroDefault;
+            if (_loadoutTitleText != null)
+                _loadoutTitleText.text = CoopLoc.T(sharedForHost ? "loadout.modal_title_shared" : "loadout.modal_title");
+
+            _loadoutAnimProgress = 0f;
+            RebuildLoadoutModalGrids();
+            _loadoutModalRoot.SetActive(true);
+            NativeStyleProvider.PlayUiOpenSound(true);
+        }
+
+        private void RebuildLoadoutModalGrids()
+        {
+            if (_loadoutTowersContent == null || _loadoutBlocksContent == null) return;
+            ClearChildren(_loadoutTowersContent);
+            ClearChildren(_loadoutBlocksContent);
+
+            if (_loadoutCountText != null)
+            {
+                string modeStr = _draftLoadout.UseHeroDefault ? $" ({CoopLoc.T("loadout.hero_default_short")})" : "";
+                _loadoutCountText.text = CoopLoc.F("loadout.counts", _draftLoadout.Towers.Count, PlayerLoadoutChoice.MaxStartingTowers, _draftLoadout.Blocks.Count, PlayerLoadoutChoice.MaxStartingBlocks) + modeStr;
+            }
+
+            var towers = LoadoutCatalog.GetSelectableTowers();
+            for (int i = 0; i < towers.Count; i++)
+            {
+                var t = towers[i];
+                bool selected = _draftLoadout.Towers.Contains(t.ItemType);
+                BuildSelectableItemTile(_loadoutTowersContent, t, selected, countBadge: 0, () =>
+                {
+                    _draftLoadout.UseHeroDefault = false;
+                    if (_draftLoadout.Towers.Contains(t.ItemType))
+                    {
+                        if (_draftLoadout.Towers.Count > 1) _draftLoadout.Towers.Remove(t.ItemType);
+                    }
+                    else if (_draftLoadout.Towers.Count < PlayerLoadoutChoice.MaxStartingTowers)
+                    {
+                        _draftLoadout.Towers.Add(t.ItemType);
+                    }
+                    RebuildLoadoutModalGrids();
+                });
+            }
+
+            var blocks = LoadoutCatalog.GetSelectableBlocks();
+            for (int i = 0; i < blocks.Count; i++)
+            {
+                var b = blocks[i];
+                int cnt = 0;
+                for (int k = 0; k < _draftLoadout.Blocks.Count; k++)
+                    if (_draftLoadout.Blocks[k] == b.ItemType) cnt++;
+
+                BuildSelectableItemTile(_loadoutBlocksContent, b, cnt > 0, countBadge: cnt, () =>
+                {
+                    _draftLoadout.UseHeroDefault = false;
+                    if (_draftLoadout.Blocks.Count >= PlayerLoadoutChoice.MaxStartingBlocks)
+                    {
+                        // Cycle removal if already at cap
+                        if (cnt > 0) _draftLoadout.Blocks.Remove(b.ItemType);
+                    }
+                    else if (cnt >= 3)
+                    {
+                        _draftLoadout.Blocks.RemoveAll(x => x == b.ItemType);
+                    }
+                    else
+                    {
+                        _draftLoadout.Blocks.Add(b.ItemType);
+                    }
+                    RebuildLoadoutModalGrids();
+                });
+            }
+
+            if (_loadoutCardRt != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_loadoutCardRt);
+        }
+
+        private static void BuildSelectableItemTile(Transform parent, SelectableItemInfo info, bool selected, int countBadge, Action onClick)
+        {
+            var tile = NativeStyleProvider.CreatePanel(
+                parent,
+                $"Item_{info.ItemType}",
+                selected ? EmberwardTheme.SelectedTileBg : NativeStyleProvider.CardBg,
+                addBorder: false,
+                isSubPanel: true,
+                roleOverride: selected ? PanelSurfaceRole.CustomAccent : PanelSurfaceRole.Card);
+            var hlg = tile.AddComponent<HorizontalLayoutGroup>();
+            hlg.padding = new RectOffset(6, 6, 3, 3);
+            hlg.spacing = 5f;
+            hlg.childAlignment = TextAnchor.MiddleLeft;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+
+            if (info.Icon != null)
+            {
+                var icGo = new GameObject("Ic");
+                icGo.transform.SetParent(tile.transform, false);
+                var ile = icGo.AddComponent<LayoutElement>();
+                ile.minWidth = 22f; ile.preferredWidth = 22f; ile.minHeight = 22f; ile.preferredHeight = 22f;
+                var img = icGo.AddComponent<Image>();
+                img.sprite = info.Icon;
+                img.color = Color.white;
+                img.preserveAspect = true;
+                img.raycastTarget = false;
+            }
+
+            string txt = countBadge > 0 ? $"{info.DisplayName} x{countBadge}" : info.DisplayName;
+            var lbl = NativeStyleProvider.CreateLabel(tile.transform, txt, 11f, selected ? NativeStyleProvider.EmberGold : NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, selected ? FontStyles.Bold : FontStyles.Normal, addShadow: true);
+            lbl.overflowMode = TextOverflowModes.Ellipsis;
+            lbl.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+
+            var btn = tile.AddComponent<Button>();
+            btn.targetGraphic = tile.GetComponent<Image>();
+            NativeStyleProvider.AttachHoverSound(tile, 1.12f);
+            btn.onClick.AddListener((UnityAction)(() =>
+            {
+                NativeStyleProvider.PlayUiSelectSound(1.16f);
+                onClick?.Invoke();
+            }));
+        }
+
+        private void ConfirmDraftLoadout()
+        {
+            if (!_draftLoadout.UseHeroDefault && (_draftLoadout.Towers.Count == 0 || _draftLoadout.Blocks.Count < PlayerLoadoutChoice.MinStartingBlocks))
+            {
+                GameRefs.ShowGameToast(CoopLoc.F("loadout.min_blocks_hint", PlayerLoadoutChoice.MinStartingBlocks), 2.4f);
+                return;
+            }
+
+            _draftLoadout.IsConfirmed = true;
+            if (_editingSharedLoadout && Net.IsHost)
+            {
+                Setup.HostSharedLoadout = _draftLoadout.Clone();
+                _session.HostBroadcastLobbySetup(LobbySetupChangeMask.SessionRules, resetReadyOnMajor: false);
+            }
+            else
+            {
+                Net.SetLocalLoadout(_draftLoadout);
+            }
+
+            _loadoutModalRoot.SetActive(false);
+            _dirty = true;
+            NativeStyleProvider.PlayUiOpenSound(false);
+        }
+
         private void BuildStartOverrideDialog(Transform parent)
         {
             _overrideDialogRoot = new GameObject("StartOverrideDialog");
@@ -1394,6 +1796,136 @@ namespace EmberwardCoop.UI
             _hostClosedDialogRoot.SetActive(false);
         }
 
+        private void HostSetLoadRunMode(bool loadMode)
+        {
+            if (!Net.IsHost || Setup.IsLaunchingRun) return;
+            if (Setup.IsLoadRunMode == loadMode) return;
+            Setup.IsLoadRunMode = loadMode;
+            if (loadMode)
+            {
+                RefreshCoopSavesList();
+                if (_cachedCoopSaves.Count > 0 && string.IsNullOrEmpty(Setup.SelectedSaveId))
+                {
+                    Setup.SelectedSaveId = _cachedCoopSaves[0].SaveId;
+                    Setup.SelectedSaveSummary = _cachedCoopSaves[0].BuildCompactSummary();
+                }
+            }
+            _session.HostBroadcastLobbySetup(LobbySetupChangeMask.SaveMode);
+        }
+
+        private void RefreshCoopSavesList()
+        {
+            _cachedCoopSaves = CoopSaveStorage.ListSaves();
+            if (!string.IsNullOrEmpty(Setup.SelectedSaveId))
+            {
+                bool found = false;
+                for (int i = 0; i < _cachedCoopSaves.Count; i++)
+                {
+                    if (_cachedCoopSaves[i].SaveId == Setup.SelectedSaveId)
+                    {
+                        Setup.SelectedSaveSummary = _cachedCoopSaves[i].BuildCompactSummary();
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                {
+                    Setup.SelectedSaveId = _cachedCoopSaves.Count > 0 ? _cachedCoopSaves[0].SaveId : "";
+                    Setup.SelectedSaveSummary = _cachedCoopSaves.Count > 0 ? _cachedCoopSaves[0].BuildCompactSummary() : "";
+                }
+            }
+        }
+
+        private void RebuildCoopSavesList()
+        {
+            if (_saveListRoot == null) return;
+            ClearChildren(_saveListRoot);
+
+            if (_cachedCoopSaves.Count == 0)
+            {
+                var empty = NativeStyleProvider.CreateLabel(_saveListRoot, CoopLoc.T("save.no_saves"), 12f, NativeStyleProvider.TextMuted, TextAlignmentOptions.Center, FontStyles.Italic, wordWrap: true);
+                empty.gameObject.AddComponent<LayoutElement>().minHeight = 46f;
+                return;
+            }
+
+            for (int i = 0; i < _cachedCoopSaves.Count; i++)
+            {
+                var sv = _cachedCoopSaves[i];
+                bool selected = sv.SaveId == Setup.SelectedSaveId;
+
+                var row = NativeStyleProvider.CreatePanel(
+                    _saveListRoot,
+                    $"Save_{sv.SaveId}",
+                    selected ? EmberwardTheme.SelectedTileBg : NativeStyleProvider.CardBg,
+                    addBorder: false,
+                    isSubPanel: true,
+                    roleOverride: selected ? PanelSurfaceRole.CustomAccent : PanelSurfaceRole.Card);
+                var rle = row.AddComponent<LayoutElement>();
+                rle.minHeight = 44f; rle.preferredHeight = 44f;
+
+                var hlg = row.AddComponent<HorizontalLayoutGroup>();
+                hlg.padding = new RectOffset(8, 6, 4, 4);
+                hlg.spacing = 6f;
+                hlg.childAlignment = TextAnchor.MiddleLeft;
+                hlg.childControlWidth = true;
+                hlg.childControlHeight = true;
+                hlg.childForceExpandWidth = false;
+
+                var txtCol = new GameObject("Txt");
+                txtCol.transform.SetParent(row.transform, false);
+                txtCol.AddComponent<LayoutElement>().flexibleWidth = 1f;
+                var tv = txtCol.AddComponent<VerticalLayoutGroup>();
+                tv.spacing = 1f;
+                tv.childControlWidth = true;
+                tv.childControlHeight = true;
+                tv.childForceExpandWidth = true;
+
+                var heroEntry = NativeAssetRegistry.GetHeroAvatar(((eCharacterType)sv.HostHero).ToString());
+                NativeStyleProvider.CreateLabel(txtCol.transform, $"{sv.DisplayName}  ·  {heroEntry.DisplayName}", 12f, selected ? NativeStyleProvider.EmberGold : NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, FontStyles.Bold);
+                NativeStyleProvider.CreateLabel(txtCol.transform, sv.BuildCompactSummary(), 10.5f, NativeStyleProvider.TextMuted, TextAlignmentOptions.MidlineLeft);
+
+                string sid = sv.SaveId;
+                string summary = sv.BuildCompactSummary();
+                var rowBtn = row.AddComponent<Button>();
+                rowBtn.targetGraphic = row.GetComponent<Image>();
+                rowBtn.onClick.AddListener((UnityAction)(() =>
+                {
+                    if (!Net.IsHost || Setup.IsLaunchingRun) return;
+                    Setup.SelectedSaveId = sid;
+                    Setup.SelectedSaveSummary = summary;
+                    _session.HostBroadcastLobbySetup(LobbySetupChangeMask.SaveMode, resetReadyOnMajor: false);
+                }));
+
+                var delBtn = NativeStyleProvider.CreateButton(row.transform, "×", NativeStyleProvider.ButtonDanger, () =>
+                {
+                    if (!Net.IsHost || Setup.IsLaunchingRun) return;
+                    CoopSaveStorage.DeleteSave(sid);
+                    RefreshCoopSavesList();
+                    _session.HostBroadcastLobbySetup(LobbySetupChangeMask.SaveMode, resetReadyOnMajor: false);
+                }, 13f, 26f);
+                delBtn.GetComponent<LayoutElement>().preferredWidth = 28f;
+            }
+        }
+
+        private void HostCycleHero(int delta)
+        {
+            if (!Net.IsHost || Setup.IsLaunchingRun) return;
+            var heroes = LoadoutCatalog.GetSelectableHeroes(_session.Unlocks);
+            if (heroes.Count == 0) return;
+            int idx = heroes.IndexOf(Setup.HostHero);
+            if (idx < 0) idx = 0;
+            int next = ((idx + delta) % heroes.Count + heroes.Count) % heroes.Count;
+            Setup.HostHero = heroes[next];
+            _session.HostBroadcastLobbySetup(LobbySetupChangeMask.Hero);
+        }
+
+        private void HostToggleUnlockAllMapsModes()
+        {
+            if (!Net.IsHost || Setup.IsLaunchingRun) return;
+            Settings.UnlockAllMapsModes = !Settings.UnlockAllMapsModes;
+            _session.RefreshPartyUnlocksAndValidateSelection(broadcast: true);
+        }
+
         private void HostSetEconomyMode(CoopEconomyMode mode)
         {
             if (!Net.IsHost || Setup.IsLaunchingRun) return;
@@ -1405,7 +1937,7 @@ namespace EmberwardCoop.UI
         private void HostCycleWorld(int delta)
         {
             if (!Net.IsHost || Setup.IsLaunchingRun) return;
-            var worlds = WorldCatalog.GetHostSelectableWorlds(Setup.DifficultyTier);
+            var worlds = WorldCatalog.GetHostSelectableWorlds(Setup.DifficultyTier, _session.Unlocks);
             if (worlds.Count == 0) return;
 
             int curIdx = 0;
@@ -1420,14 +1952,15 @@ namespace EmberwardCoop.UI
         private void HostCycleDifficulty(int delta)
         {
             if (!Net.IsHost || Setup.IsLaunchingRun) return;
-            var diffs = WorldCatalog.AllDifficulties;
-            int curIdx = Array.IndexOf(diffs, Setup.DifficultyTier);
-            if (curIdx < 0) curIdx = 1;
+            var diffs = WorldCatalog.GetPartySelectableDifficulties(_session.Unlocks);
+            if (diffs.Count == 0) return;
+            int curIdx = diffs.IndexOf(Setup.DifficultyTier);
+            if (curIdx < 0) curIdx = 0;
 
-            int nextIdx = ((curIdx + delta) % diffs.Length + diffs.Length) % diffs.Length;
+            int nextIdx = ((curIdx + delta) % diffs.Count + diffs.Count) % diffs.Count;
             Setup.DifficultyTier = diffs[nextIdx];
 
-            var unlocked = WorldCatalog.GetHostSelectableWorlds(Setup.DifficultyTier);
+            var unlocked = WorldCatalog.GetHostSelectableWorlds(Setup.DifficultyTier, _session.Unlocks);
             bool stillValid = false;
             for (int i = 0; i < unlocked.Count; i++)
                 if (unlocked[i].WorldType == Setup.SelectedWorld) { stillValid = true; break; }
@@ -1440,6 +1973,12 @@ namespace EmberwardCoop.UI
         private void OnHostClickStartRun()
         {
             if (!Net.IsHost || Setup.IsLaunchingRun) return;
+
+            if (!_session.ValidateLoadoutsBeforeStart(out string validationErr))
+            {
+                GameRefs.ShowGameToast(validationErr, 2.8f);
+                return;
+            }
 
             bool allReady = Net.AreAllClientsReady(out int readyCount, out int totalClients);
             if (allReady)
@@ -1603,12 +2142,36 @@ namespace EmberwardCoop.UI
             }
 
             _clientReadOnlyBadgeObj.SetActive(isClient);
+            if (_runModeSwitchRow != null) _runModeSwitchRow.SetActive(isHost);
+            if (_runTabNewBg != null) _runTabNewBg.color = !Setup.IsLoadRunMode ? EmberwardTheme.TabActive : EmberwardTheme.TabInactive;
+            if (_runTabLoadBg != null) _runTabLoadBg.color = Setup.IsLoadRunMode ? EmberwardTheme.TabActive : EmberwardTheme.TabInactive;
+            if (_newRunSetupGroup != null) _newRunSetupGroup.SetActive(!Setup.IsLoadRunMode);
+            if (_loadRunCard != null) _loadRunCard.SetActive(Setup.IsLoadRunMode);
+
+            if (Setup.IsLoadRunMode)
+            {
+                if (_hostSaveListContainer != null) _hostSaveListContainer.SetActive(isHost);
+                if (_clientLoadSaveSummaryText != null)
+                {
+                    _clientLoadSaveSummaryText.gameObject.SetActive(isClient);
+                    if (isClient)
+                    {
+                        _clientLoadSaveSummaryText.text = string.IsNullOrWhiteSpace(Setup.SelectedSaveSummary)
+                            ? CoopLoc.T("save.waiting_host_select")
+                            : CoopLoc.F("save.client_resuming_summary", Setup.SelectedSaveSummary);
+                    }
+                }
+                if (isHost) RebuildCoopSavesList();
+            }
+
             _hostModeButtonsRow.SetActive(isHost);
             _clientModeReadOnlyRow.SetActive(isClient);
             _worldPrevBtnObj.SetActive(hostEditable);
             _worldNextBtnObj.SetActive(hostEditable);
             _diffPrevBtnObj.SetActive(hostEditable);
             _diffNextBtnObj.SetActive(hostEditable);
+            if (_heroPrevBtnObj != null) _heroPrevBtnObj.SetActive(hostEditable);
+            if (_heroNextBtnObj != null) _heroNextBtnObj.SetActive(hostEditable);
 
             bool isSeparate = Settings.EconomyMode == CoopEconomyMode.SeparateResources;
             if (_modeSharedBg != null) _modeSharedBg.color = !isSeparate ? NativeStyleProvider.ButtonPrimary : NativeStyleProvider.ButtonSecondary;
@@ -1617,6 +2180,38 @@ namespace EmberwardCoop.UI
                 _clientModeReadOnlyText.text = isSeparate ? CoopLoc.T("lobby.mode_separate") : CoopLoc.T("lobby.mode_shared");
             if (_modeRulesDescText != null)
                 _modeRulesDescText.text = isSeparate ? CoopLoc.T("lobby.mode_separate_desc") : CoopLoc.T("lobby.mode_shared_desc");
+
+            if (_sharedLoadoutToggleRow != null) _sharedLoadoutToggleRow.SetActive(!isSeparate);
+            if (_sharedLoadoutToggleLabel != null)
+                _sharedLoadoutToggleLabel.text = Settings.SharedLoadoutsInSharedMode
+                    ? CoopLoc.T("settings.val_shared_loadouts")
+                    : CoopLoc.T("settings.val_individual_loadouts");
+            if (_sharedLoadoutToggleBg != null)
+                _sharedLoadoutToggleBg.color = Settings.SharedLoadoutsInSharedMode ? NativeStyleProvider.ButtonSuccess : NativeStyleProvider.ButtonPrimary;
+
+            var hostHeroEntry = NativeAssetRegistry.GetHeroAvatar(Setup.HostHero.ToString());
+            if (_hostHeroPortrait != null)
+            {
+                _hostHeroPortrait.sprite = hostHeroEntry.PortraitSprite ?? NativeAssetRegistry.GetFallbackIcon();
+                _hostHeroPortrait.color = Color.white;
+                _hostHeroPortrait.preserveAspect = true;
+            }
+            if (_hostHeroNameText != null) _hostHeroNameText.text = hostHeroEntry.DisplayName;
+            if (_hostHeroTraitsText != null)
+            {
+                string traits = LoadoutCatalog.GetHeroTraitsSummary(Setup.HostHero);
+                if (!Settings.UsesIndividualLoadouts)
+                {
+                    string ldSum = Setup.HostSharedLoadout.BuildCompactSummary(Setup.HostHero);
+                    _hostHeroTraitsText.text = string.IsNullOrEmpty(traits) ? ldSum : $"{traits}  |  {ldSum}";
+                }
+                else
+                {
+                    _hostHeroTraitsText.text = traits;
+                }
+            }
+            if (_sharedLoadoutBtnObj != null)
+                _sharedLoadoutBtnObj.SetActive(hostEditable && !Settings.UsesIndividualLoadouts);
 
             var worldInfo = WorldCatalog.GetWorldInfo(Setup.SelectedWorld);
             Color worldAccent = WorldCatalog.GetWorldAccentColor(Setup.SelectedWorld);
@@ -1629,8 +2224,11 @@ namespace EmberwardCoop.UI
             bool cleared = false;
             try
             {
-                var pld = GameDataManager.instance?.Playerdata;
-                if (pld != null) cleared = pld.IsWorldCleared(Setup.DifficultyTier, Setup.SelectedWorld);
+                using (PartyUnlockResolver.EnterRealUnlockRead())
+                {
+                    var pld = GameDataManager.instance?.Playerdata;
+                    if (pld != null) cleared = pld.IsWorldCleared(Setup.DifficultyTier, Setup.SelectedWorld);
+                }
             }
             catch { }
 
@@ -1638,6 +2236,12 @@ namespace EmberwardCoop.UI
                 ? $"{CoopLoc.T(worldInfo.NameKey)}  ✓"
                 : CoopLoc.T(worldInfo.NameKey);
             _worldNameText.color = worldAccent;
+            if (_worldUnlockNoteText != null)
+            {
+                string wNote = _session.Unlocks.GetWorldUnlockNote(Setup.SelectedWorld);
+                _worldUnlockNoteText.gameObject.SetActive(!string.IsNullOrEmpty(wNote));
+                _worldUnlockNoteText.text = wNote;
+            }
             _worldMetaBadgeText.text = CoopLoc.F("world.meta_format", worldInfo.MapSteps, worldInfo.WavesLabel);
             _worldDescText.text = CoopLoc.T(worldInfo.DescKey);
             _worldHazardsText.text = CoopLoc.T(worldInfo.HazardsKey);
@@ -1647,6 +2251,17 @@ namespace EmberwardCoop.UI
             _difficultyBadgeText.color = Color.white;
             if (_difficultyBadgeBg != null)
                 _difficultyBadgeBg.color = new Color(diffCol.r * 0.58f + 0.12f, diffCol.g * 0.58f + 0.10f, diffCol.b * 0.58f + 0.08f, 0.96f);
+
+            if (_diffUnlockNoteText != null)
+            {
+                string dNote = _session.Unlocks.GetDifficultyUnlockNote(Setup.DifficultyTier);
+                _diffUnlockNoteText.text = dNote;
+            }
+            if (_unlockAllBtnObj != null) _unlockAllBtnObj.SetActive(isHost || Settings.UnlockAllMapsModes);
+            if (_unlockAllBtnBg != null)
+                _unlockAllBtnBg.color = Settings.UnlockAllMapsModes ? NativeStyleProvider.ButtonSuccess : NativeStyleProvider.ButtonSecondary;
+            if (_unlockAllBtnLabel != null)
+                _unlockAllBtnLabel.text = $"{CoopLoc.T("lobby.unlock_all_toggle")}: {(Settings.UnlockAllMapsModes ? CoopLoc.T("modcfg.on") : CoopLoc.T("modcfg.off"))}";
 
             if (_openRulesBtnLabel != null)
                 _openRulesBtnLabel.text = isHost ? CoopLoc.T("lobby.session_settings_btn") : CoopLoc.T("lobby.view_rules_btn");
@@ -1681,7 +2296,9 @@ namespace EmberwardCoop.UI
                 if (_startRunBtnBg != null)
                     _startRunBtnBg.color = allReady ? NativeStyleProvider.ButtonSuccess : NativeStyleProvider.ButtonPrimary;
                 if (_startRunBtnLabel != null)
-                    _startRunBtnLabel.text = launching ? CoopLoc.T("lobby.launching_run") : CoopLoc.T("lobby.start_run");
+                    _startRunBtnLabel.text = launching
+                        ? CoopLoc.T("lobby.launching_run")
+                        : (Setup.IsLoadRunMode ? CoopLoc.T("save.resume_run_btn") : CoopLoc.T("lobby.start_run"));
             }
             else if (isClient)
             {
@@ -1757,6 +2374,10 @@ namespace EmberwardCoop.UI
                 : (Settings.GiftPerWaveCap > 0 ? $"{Settings.GiftPerWaveCap}g/Wave" : CoopLoc.T("settings.val_unlimited"));
             _lblDraftSync.text = Settings.DraftMode == DraftSyncMode.SimultaneousIndependent ? CoopLoc.T("settings.val_simultaneous") : CoopLoc.T("settings.val_host_shared");
             _lblSpeedCtrl.text = Settings.SpeedControl == SpeedControlRule.AnyPlayer ? CoopLoc.T("settings.val_any_player") : CoopLoc.T("settings.val_host_only");
+            if (_lblSharedLoadouts != null)
+                _lblSharedLoadouts.text = Settings.SharedLoadoutsInSharedMode ? CoopLoc.T("settings.val_shared_loadouts") : CoopLoc.T("settings.val_individual_loadouts");
+            if (_lblUnlockAll != null)
+                _lblUnlockAll.text = Settings.UnlockAllMapsModes ? CoopLoc.T("modcfg.on") : CoopLoc.T("modcfg.off");
         }
 
         private void RebuildLobbyList(Transform container, IReadOnlyList<LobbySummary> lobbies, bool isSteam, LayoutElement scrollLe)
@@ -1959,8 +2580,8 @@ namespace EmberwardCoop.UI
                 npHlg.childControlHeight = true;
                 npHlg.childForceExpandWidth = false;
 
-                Color nameCol = p.IsHost ? NativeStyleProvider.EmberGold : NativeStyleProvider.TextLight;
-                var nLbl = NativeStyleProvider.CreateLabel(namePingRow.transform, p.Name, 13f, nameCol, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true);
+                // Player names are colored with the player's color; portraits stay untinted.
+                var nLbl = NativeStyleProvider.CreateLabel(namePingRow.transform, p.Name, 13f, pCol, TextAlignmentOptions.MidlineLeft, FontStyles.Bold, addShadow: true);
                 nLbl.overflowMode = TextOverflowModes.Ellipsis;
                 var nLe = nLbl.gameObject.AddComponent<LayoutElement>();
                 nLe.flexibleWidth = 1f;
@@ -1968,11 +2589,19 @@ namespace EmberwardCoop.UI
 
                 NativeStyleProvider.CreateInlinePingLabel(namePingRow.transform, p.PingMs, p.IsHost, 10.5f);
 
-                string subLine = isLocal
-                    ? $"{hero.DisplayName}  ·  {CoopLoc.T("lobby.change_avatar_hint")}"
-                    : hero.DisplayName;
+                bool showIndivLoadout = Settings.UsesIndividualLoadouts && !Setup.IsLoadRunMode;
+                string subLine = showIndivLoadout
+                    ? p.Loadout.BuildCompactSummary(Setup.HostHero)
+                    : (isLocal ? $"{hero.DisplayName}  ·  {CoopLoc.T("lobby.change_avatar_hint")}" : hero.DisplayName);
                 var hLbl = NativeStyleProvider.CreateLabel(nameWrap.transform, subLine, 10f, isLocal ? NativeStyleProvider.EmberGoldSoft : NativeStyleProvider.TextMuted, TextAlignmentOptions.MidlineLeft);
                 hLbl.overflowMode = TextOverflowModes.Ellipsis;
+
+                if (showIndivLoadout && isLocal && !Setup.IsLaunchingRun)
+                {
+                    var ldBtn = NativeStyleProvider.CreateButton(rowBg.transform, CoopLoc.T("loadout.btn_short"), NativeStyleProvider.ButtonPrimary, () => OpenLoadoutPicker(sharedForHost: false), 10.5f, 24f);
+                    var ldLe = ldBtn.GetComponent<LayoutElement>();
+                    ldLe.minWidth = 62f; ldLe.preferredWidth = 68f;
+                }
 
                 string statusStr = p.IsHost ? "HOST" : (p.IsReady ? CoopLoc.T("lobby.ready") : CoopLoc.T("lobby.not_ready"));
                 Color statusCol = p.IsHost

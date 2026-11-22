@@ -657,7 +657,7 @@ namespace EmberwardCoop.UI
                     namePingRow.transform,
                     p.Name,
                     compact ? 11.5f : 12.5f,
-                    p.PlayerId == Net.LocalPlayerId ? NativeStyleProvider.TextLight : new Color(0.95f, 0.91f, 0.84f, 1f),
+                    playerCol,
                     TextAlignmentOptions.MidlineLeft,
                     p.IsHost ? FontStyles.Bold : FontStyles.Normal,
                     wordWrap: false,
@@ -757,6 +757,11 @@ namespace EmberwardCoop.UI
 
         private static string ResolvePlayerStatusBadge(PeerInfo p, bool inCombatWave, out Color color)
         {
+            if (p.IsDraftingBusy && string.IsNullOrEmpty(p.ActiveModal))
+            {
+                color = NativeStyleProvider.StatusWarn;
+                return CoopLoc.T("hud.status_drafting");
+            }
             if (!string.IsNullOrEmpty(p.ActiveModal))
             {
                 string m = p.ActiveModal;
@@ -839,10 +844,11 @@ namespace EmberwardCoop.UI
             if (_peekAvatarPortrait != null)
             {
                 _peekAvatarPortrait.sprite = hero.PortraitSprite ?? NativeAssetRegistry.GetFallbackIcon();
+                _peekAvatarPortrait.color = Color.white;
                 _peekAvatarPortrait.preserveAspect = true;
             }
             if (_peekAvatarFrame != null)
-                _peekAvatarFrame.color = Color.Lerp(col, NativeStyleProvider.EmberGold, 0.18f);
+                _peekAvatarFrame.color = NativeStyleProvider.EmberBorder;
 
             _peekTitleText.text = Net.GetPlayerName(hoveredPeer);
             _peekTitleText.color = col;

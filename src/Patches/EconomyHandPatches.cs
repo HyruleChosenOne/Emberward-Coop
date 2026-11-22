@@ -11,8 +11,11 @@ namespace EmberwardCoop.Patches
     {
         private static SessionController S => SessionController.Instance;
 
-        private static bool AllowLocalEconomyAndHandMutation()
-            => S == null || !(S.Net.IsClient && S.Ruleset.BlocksClientLocalEconomyAndHandMutations && !NetworkScope.IsApplying);
+        private static bool AllowLocalHandMutation()
+            => S == null || !(S.Net.IsClient && S.Ruleset.SyncsGlobalDeckAndHand && !NetworkScope.IsApplying);
+
+        private static bool AllowLocalGoldMutation()
+            => S == null || !(S.Net.IsClient && S.Ruleset.SyncsGlobalGold && !NetworkScope.IsApplying);
 
         private static bool AllowLocalCoreVitalMutation()
             => S == null || !(S.Net.IsClient && !NetworkScope.IsApplying);
@@ -41,7 +44,7 @@ namespace EmberwardCoop.Patches
         [HarmonyPrefix]
         public static bool DrawCardAtRoundStart_Prefix(ref Coroutine __result)
         {
-            if (S != null && S.Net.IsClient && S.Ruleset.BlocksClientLocalEconomyAndHandMutations && !NetworkScope.IsApplying)
+            if (S != null && S.Net.IsClient && S.Ruleset.SyncsGlobalDeckAndHand && !NetworkScope.IsApplying)
             {
                 __result = null;
                 return false;
@@ -51,27 +54,27 @@ namespace EmberwardCoop.Patches
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.DrawCardFromDeck), new[] { typeof(int) })]
         [HarmonyPrefix]
-        public static bool DrawCardFromDeck_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool DrawCardFromDeck_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.DrawSpecificCardFromDeck), new[] { typeof(CardData) })]
         [HarmonyPrefix]
-        public static bool DrawSpecificCardFromDeck_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool DrawSpecificCardFromDeck_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestDrawCard), new[] { typeof(int), typeof(bool) })]
         [HarmonyPrefix]
-        public static bool OnRequestDrawCard_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestDrawCard_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestDrawSpecificCard), new[] { typeof(CardData), typeof(bool) })]
         [HarmonyPrefix]
-        public static bool OnRequestDrawSpecificCard_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestDrawSpecificCard_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.AddCardToPlayerHand), new[] { typeof(eItemType) })]
         [HarmonyPrefix]
-        public static bool AddCardToPlayerHand_Item_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool AddCardToPlayerHand_Item_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.AddCardToPlayerHand), new[] { typeof(CardData) })]
         [HarmonyPrefix]
-        public static bool AddCardToPlayerHand_Data_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool AddCardToPlayerHand_Data_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.AddCardToPlayerHand), new[] { typeof(CardData) })]
         [HarmonyPostfix]
@@ -82,23 +85,23 @@ namespace EmberwardCoop.Patches
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.AddCardToPlayerHandFromPosition), new[] { typeof(eItemType), typeof(Vector3) })]
         [HarmonyPrefix]
-        public static bool AddCardToPlayerHandFromPos_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool AddCardToPlayerHandFromPos_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestAddCardToHand), new[] { typeof(eItemType), typeof(bool) })]
         [HarmonyPrefix]
-        public static bool OnRequestAddCardToHand_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestAddCardToHand_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestAddCardToHandFromPosition), new[] { typeof(eItemType), typeof(Vector3), typeof(bool) })]
         [HarmonyPrefix]
-        public static bool OnRequestAddCardToHandFromPos_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestAddCardToHandFromPos_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.RequestAddCardToHandByCardData), new[] { typeof(CardData), typeof(bool) })]
         [HarmonyPrefix]
-        public static bool RequestAddCardToHandByData_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool RequestAddCardToHandByData_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestRemoveCardFromHand), new[] { typeof(CardData) })]
         [HarmonyPrefix]
-        public static bool OnRequestRemoveCardFromHand_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestRemoveCardFromHand_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestRemoveCardFromHand), new[] { typeof(CardData) })]
         [HarmonyPostfix]
@@ -109,29 +112,29 @@ namespace EmberwardCoop.Patches
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestDiscardCardFromHand), new[] { typeof(CardData) })]
         [HarmonyPrefix]
-        public static bool OnRequestDiscardCard_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestDiscardCard_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestDiscardAllCardsFromHand), new Type[0])]
         [HarmonyPrefix]
-        public static bool OnRequestDiscardAll_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestDiscardAll_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestRecallBlockCard), new[] { typeof(TetrisCardData) })]
         [HarmonyPrefix]
-        public static bool OnRequestRecallBlockCard_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestRecallBlockCard_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestRedrawCards), new Type[0])]
         [HarmonyPrefix]
-        public static bool OnRequestRedrawCards_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestRedrawCards_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestMulligan), new Type[0])]
         [HarmonyPrefix]
-        public static bool OnRequestMulligan_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool OnRequestMulligan_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.AddCoin), new[] { typeof(int) })]
         [HarmonyPrefix]
         public static bool AddCoin_Prefix(ref int value)
         {
-            if (!AllowLocalEconomyAndHandMutation()) return false;
+            if (!AllowLocalGoldMutation()) return false;
             // NetworkScope bypasses income scaling for gifts and sell refunds.
             if (S != null && S.Net.IsConnected && !NetworkScope.IsApplying && value > 0)
             {
@@ -142,7 +145,7 @@ namespace EmberwardCoop.Patches
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.SetCoin), new[] { typeof(int) })]
         [HarmonyPrefix]
-        public static bool SetCoin_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool SetCoin_Prefix() => AllowLocalGoldMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.SetCoin), new[] { typeof(int) })]
         [HarmonyPostfix]
@@ -185,19 +188,19 @@ namespace EmberwardCoop.Patches
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.AddCosmoShard), new[] { typeof(int) })]
         [HarmonyPrefix]
-        public static bool AddCosmoShard_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool AddCosmoShard_Prefix() => AllowLocalGoldMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.SetCosmoShard), new[] { typeof(int) })]
         [HarmonyPrefix]
-        public static bool SetCosmoShard_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool SetCosmoShard_Prefix() => AllowLocalGoldMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.IncreateDrawCost), new Type[0])]
         [HarmonyPrefix]
-        public static bool IncreateDrawCost_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool IncreateDrawCost_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnRequestResetDrawCardCost), new Type[0])]
         [HarmonyPrefix]
-        public static bool ResetDrawCardCost_Prefix() => AllowLocalEconomyAndHandMutation();
+        public static bool ResetDrawCardCost_Prefix() => AllowLocalHandMutation();
 
         [HarmonyPatch(typeof(IngameData), nameof(IngameData.OnMonsterDealDamageToPlayer), new[] { typeof(AMonsterBase), typeof(int), typeof(int), typeof(int) })]
         [HarmonyPrefix]
@@ -208,7 +211,7 @@ namespace EmberwardCoop.Patches
         public static bool UI_PlayerDeck_DrawCard_Prefix()
         {
             if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying) return true;
-            if (S.Net.IsClient && S.Ruleset.SyncsGlobalEconomyAndHand)
+            if (S.Net.IsClient && S.Ruleset.SyncsGlobalDeckAndHand)
             {
                 S.Board.ClientSendDrawCard();
                 return false;
@@ -221,7 +224,7 @@ namespace EmberwardCoop.Patches
         public static bool UI_PlayerDeck_Mulligan_Prefix(UI_PlayerDeck __instance)
         {
             if (S == null || !S.Net.IsConnected || NetworkScope.IsApplying) return true;
-            if (S.Net.IsClient && S.Ruleset.SyncsGlobalEconomyAndHand)
+            if (S.Net.IsClient && S.Ruleset.SyncsGlobalDeckAndHand)
             {
                 __instance.DisableMulligan();
                 S.Board.ClientSendMulligan();

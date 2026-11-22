@@ -28,6 +28,7 @@ namespace EmberwardCoop.Core
         private static InteractionManager _interactionManager;
         private static UI_NextWaveEnemy _nextWaveEnemy;
         private static UI_StageProgress _stageProgress;
+        private static UI_PlayerTowerList _playerTowerList;
 
         private static Il2CppSystem.Enum _boxedRequestStartNextWave;
 
@@ -61,6 +62,7 @@ namespace EmberwardCoop.Core
             _interactionManager = null;
             _nextWaveEnemy = null;
             _stageProgress = null;
+            _playerTowerList = null;
             return true;
         }
 
@@ -188,6 +190,13 @@ namespace EmberwardCoop.Core
             if (_stageProgress == null && IsInBattle)
                 _stageProgress = UnityEngine.Object.FindObjectOfType<UI_StageProgress>(true);
             return _stageProgress;
+        }
+
+        public static UI_PlayerTowerList GetPlayerTowerList()
+        {
+            if (_playerTowerList == null && IsInBattle)
+                _playerTowerList = UnityEngine.Object.FindObjectOfType<UI_PlayerTowerList>(true);
+            return _playerTowerList;
         }
 
         public static CameraController GetCameraController()

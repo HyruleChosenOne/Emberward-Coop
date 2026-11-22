@@ -33,6 +33,8 @@ namespace EmberwardCoop.UI
         private (TMP_Text txt, Image chk) _valMuteStickers;
         private (TMP_Text txt, Image chk) _valCompactHud;
         private (TMP_Text txt, Image chk) _valAutoPause;
+        private readonly List<(Image swatchBg, TMP_Text checkMark)> _colorSwatches = new List<(Image, TMP_Text)>();
+        private TMP_Text _colorRowLabel;
 
         public bool IsOpen => _isOpen;
 
@@ -166,6 +168,9 @@ namespace EmberwardCoop.UI
             scrollLe.minHeight = 260f;
             scrollLe.preferredHeight = 360f;
 
+            AddColorPickerRow(contentRt);
+            NativeStyleProvider.CreateDivider(contentRt, "ColorDiv");
+
             AddKeybindRow(contentRt, "modcfg.key_lobby", CoopConfig.ToggleLobbyKey);
             AddKeybindRow(contentRt, "modcfg.key_hud", CoopConfig.ToggleHudKey);
             AddKeybindRow(contentRt, "modcfg.key_emote", CoopConfig.EmoteWheelKey);
@@ -201,6 +206,49 @@ namespace EmberwardCoop.UI
             _closeBtnText = closeBtn.GetComponentInChildren<TMP_Text>();
 
             _root.SetActive(false);
+        }
+
+        private void AddColorPickerRow(Transform parent)
+        {
+            var row = CreateRow(parent, "PlayerColorRow", 34f);
+            _colorRowLabel = NativeStyleProvider.CreateLabel(row.transform, CoopLoc.T("modcfg.player_color"), 13f, NativeStyleProvider.TextLight, TextAlignmentOptions.MidlineLeft, autoSize: true, minFontSize: 10.5f);
+            _colorRowLabel.gameObject.AddComponent<LayoutElement>().flexibleWidth = 1f;
+
+            var swatchesWrap = new GameObject("Swatches");
+            swatchesWrap.transform.SetParent(row.transform, false);
+            var hlg = swatchesWrap.AddComponent<HorizontalLayoutGroup>();
+            hlg.spacing = 6f;
+            hlg.childAlignment = TextAnchor.MiddleRight;
+            hlg.childControlWidth = true;
+            hlg.childControlHeight = true;
+            hlg.childForceExpandWidth = false;
+
+            for (int i = 0; i < CoopConfig.PlayerPalette.Length; i++)
+            {
+                int colorIdx = i;
+                Color c = CoopConfig.PlayerPalette[i];
+                var btn = NativeStyleProvider.CreateButton(swatchesWrap.transform, "", c, () =>
+                {
+                    var session = Sync.SessionController.Instance;
+                    if (session != null) session.Net.SetLocalColor(colorIdx);
+                    else if (CoopConfig.PreferredColorIndex != null) CoopConfig.PreferredColorIndex.Value = colorIdx;
+                    NativeStyleProvider.PlayUiSelectSound(1.12f);
+                    RefreshLabels();
+                }, 13f, 26f);
+                var ble = btn.GetComponent<LayoutElement>();
+                ble.minWidth = 28f;
+                ble.preferredWidth = 28f;
+
+                var bg = btn.GetComponent<Image>();
+                bg.color = c;
+                var txt = btn.GetComponentInChildren<TMP_Text>();
+                if (txt != null)
+                {
+                    txt.color = new Color(0.10f, 0.08f, 0.06f, 1f);
+                    txt.text = "";
+                }
+                _colorSwatches.Add((bg, txt));
+            }
         }
 
         private void AddKeybindRow(Transform parent, string locKey, ConfigEntry<KeyCode> entry)
@@ -275,6 +323,25 @@ namespace EmberwardCoop.UI
             UpdateToggleVisual(_valMuteStickers, CoopConfig.MuteTeammateStickers.Value);
             UpdateToggleVisual(_valCompactHud, CoopConfig.CompactHudMode.Value);
             UpdateToggleVisual(_valAutoPause, CoopConfig.AutoPauseOnDisconnect.Value);
+
+            var session = Sync.SessionController.Instance;
+            bool isHost = session != null && session.Net.IsHost;
+            if (_colorRowLabel != null)
+                _colorRowLabel.text = CoopLoc.T(isHost ? "modcfg.host_color" : "modcfg.player_color");
+
+            int activeColor = session != null && session.Net.IsConnected
+                ? session.Net.LocalColorIndex
+                : Math.Clamp(CoopConfig.PreferredColorIndex?.Value ?? 0, 0, CoopConfig.PlayerPalette.Length - 1);
+
+            for (int i = 0; i < _colorSwatches.Count; i++)
+            {
+                var (bg, chk) = _colorSwatches[i];
+                bool selected = i == activeColor;
+                if (bg != null)
+                    bg.color = selected ? CoopConfig.PlayerPalette[i] : Color.Lerp(CoopConfig.PlayerPalette[i], new Color(0.28f, 0.24f, 0.20f, 1f), 0.28f);
+                if (chk != null)
+                    chk.text = selected ? "✓" : "";
+            }
         }
 
         private static void UpdateToggleVisual((TMP_Text txt, Image chk) pair, bool isOn)

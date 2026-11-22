@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using EmberwardCoop.Core;
 using EmberwardCoop.Networking;
+using EmberwardCoop.Rules;
 using EmberwardCoop.Serialization;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -19,6 +21,13 @@ namespace EmberwardCoop.Sync
         public int HostSelectedMapNodeIndex = -1;
         public string PendingEnvSceneName = "";
         public int PendingStageSeed = 0;
+        public string ActiveCoopSaveId = "";
+        public byte[] PendingRestoreBoardBytes;
+        public int PendingRestoreCoin = -1;
+        public bool HasHydratedLocalStartLoadout;
+
+        // Host caches per-peer saved inventories for co-op savefiles
+        public readonly Dictionary<int, SavedPlayerStateDto> PeerSavedInventories = new Dictionary<int, SavedPlayerStateDto>();
 
         public bool MenuLockDirty = true;
         private bool _runDirty;
@@ -30,8 +39,7 @@ namespace EmberwardCoop.Sync
         private string _pendingSceneToLoad = "";
         private bool _wasClientConnected;
 
-        // Map node voting: playerId -> nodeIndex
-        public readonly Dictionary<int, int> MapNodeVotes = new Dictionary<int, int>();
+        public Dictionary<int, int> MapNodeVotes => _session()?.Votes.MapNodeVotes;
         public event Action OnMapVotesChanged;
 
         public RunStateSync(NetworkManager net, Func<SessionController> session)
@@ -42,15 +50,22 @@ namespace EmberwardCoop.Sync
 
         public void MarkDirty() => _runDirty = true;
 
+        public void NotifyMapVotesChanged() => OnMapVotesChanged?.Invoke();
+
         public void Reset()
         {
             _pendingSceneToLoad = "";
             _lastClientSceneSeq = -1;
             HostSelectedMapNodeIndex = -1;
-            MapNodeVotes.Clear();
+            ActiveCoopSaveId = "";
+            PendingRestoreBoardBytes = null;
+            PendingRestoreCoin = -1;
+            HasHydratedLocalStartLoadout = false;
+            PeerSavedInventories.Clear();
             MenuLockDirty = true;
             _runDirty = false;
             _lastRunHash = 0;
+            SoloSaveGuard.ExitCoopTempSession();
         }
 
         public void Tick(string activeScene, float now)
@@ -90,23 +105,18 @@ namespace EmberwardCoop.Sync
 
         private void UpdateClientProtectionAndMenuLocks(string activeScene, bool isClient)
         {
-            var gdm = GameDataManager.instance;
             if (isClient && !_wasClientConnected)
             {
                 _wasClientConnected = true;
                 _lastClientSceneSeq = -1;
-                if (gdm != null && !gdm.doUseTempSessionData)
-                {
-                    gdm.SwitchSession(true);
-                    CoopLogger.Info(LogCategory.Sync, "Switched Client to protected co-op session (solo run untouched).");
-                }
+                SoloSaveGuard.EnterCoopTempSession();
             }
             else if (!isClient && _wasClientConnected)
             {
                 _wasClientConnected = false;
                 _pendingSceneToLoad = "";
-                if (gdm != null && gdm.doUseTempSessionData)
-                    gdm.SwitchSession(false);
+                if (!_net.IsConnected)
+                    SoloSaveGuard.ExitCoopTempSession();
 
                 var cp = GameRefs.GetCoinPage();
                 if (cp != null)
@@ -121,8 +131,8 @@ namespace EmberwardCoop.Sync
 
             if (!isClient) return;
 
-            if (gdm != null && !gdm.doUseTempSessionData)
-                gdm.SwitchSession(true);
+            if (!SoloSaveGuard.IsInIsolatedCoopSession)
+                SoloSaveGuard.EnterCoopTempSession();
 
             if (activeScene == "CoinPage")
             {
@@ -256,13 +266,42 @@ namespace EmberwardCoop.Sync
             }
         }
 
+        public byte[] CaptureRunSnapshotBytes(string overrideTargetScene = null)
+        {
+            using var ms = new MemoryStream(2048);
+            using var bw = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
+            WriteRunSnapshot(bw, overrideTargetScene);
+            bw.Flush();
+            return ms.ToArray();
+        }
+
+        public void ApplyRunSnapshotBytes(byte[] data, bool loadScene)
+        {
+            if (data == null || data.Length == 0) return;
+            using var ms = new MemoryStream(data);
+            using var br = new BinaryReader(ms, Encoding.UTF8);
+            ReadAndApplyRunSnapshot(br, allowSceneTransition: loadScene, forceApplyInventory: true);
+        }
+
         public void BroadcastRunSnapshot(int targetPeerId = -1, string overrideTargetScene = null)
         {
             if (!_net.IsHost) return;
+            if (GameDataManager.instance == null) return;
+
+            Action<BinaryWriter> writer = w => WriteRunSnapshot(w, overrideTargetScene);
+
+            if (targetPeerId >= 0) _net.SendToPeer(targetPeerId, PacketType.RunSnapshot, writer);
+            else _net.BroadcastToClients(PacketType.RunSnapshot, writer);
+
+            var gd = GameDataManager.instance?.GameplayData;
+            CoopLogger.Debug(LogCategory.Sync, $"Sent RunSnapshot (scene={HostTargetScene}, seq={HostSceneLoadSeq}, seed={gd?.randomSeed ?? 0}).");
+        }
+
+        private void WriteRunSnapshot(BinaryWriter w, string overrideTargetScene)
+        {
             var gdm = GameDataManager.instance;
-            if (gdm == null) return;
-            var gd = gdm.GameplayData;
-            var id = gdm.IntermediateData;
+            var gd = gdm?.GameplayData;
+            var id = gdm?.IntermediateData;
 
             if (!string.IsNullOrEmpty(overrideTargetScene))
             {
@@ -288,7 +327,6 @@ namespace EmberwardCoop.Sync
             else if (id?.mapNodeData != null && !string.IsNullOrEmpty(id.mapNodeData.stageEnvSceneName))
                 envScene = id.mapNodeData.stageEnvSceneName;
 
-            Action<BinaryWriter> writer = w =>
             {
                 w.WriteSafeString(HostTargetScene ?? "CoinPage");
                 w.Write(HostSceneLoadSeq);
@@ -411,15 +449,13 @@ namespace EmberwardCoop.Sync
                 w.WriteSafeString(id?.leaderboardName);
                 w.WriteSafeString(id?.endlessModeRoundRewardDataPath);
                 GameSerializers.WriteMapNode(w, id?.mapNodeData);
-            };
-
-            if (targetPeerId >= 0) _net.SendToPeer(targetPeerId, PacketType.RunSnapshot, writer);
-            else _net.BroadcastToClients(PacketType.RunSnapshot, writer);
-
-            CoopLogger.Debug(LogCategory.Sync, $"Sent RunSnapshot (scene={HostTargetScene}, seq={HostSceneLoadSeq}, seed={gd?.randomSeed ?? 0}).");
+            }
         }
 
         public void HandleRunSnapshot(BinaryReader r)
+            => ReadAndApplyRunSnapshot(r, allowSceneTransition: true, forceApplyInventory: false);
+
+        private void ReadAndApplyRunSnapshot(BinaryReader r, bool allowSceneTransition, bool forceApplyInventory)
         {
             string targetScene = r.ReadString();
             int sceneSeq = r.ReadInt32();
@@ -481,9 +517,9 @@ namespace EmberwardCoop.Sync
 
             using (NetworkScope.Enter())
             {
-                if (gdm != null && !gdm.doUseTempSessionData)
+                if (gdm != null && !SoloSaveGuard.IsInIsolatedCoopSession)
                 {
-                    gdm.SwitchSession(true);
+                    SoloSaveGuard.EnterCoopTempSession();
                     gd = gdm.GameplayData;
                 }
 
@@ -563,8 +599,12 @@ namespace EmberwardCoop.Sync
 
                 if (gd != null)
                 {
-                    bool preserveClientInventory = (_session()?.Ruleset.AllowsClientIndependentDraftsAndShops ?? false)
-                        && gd.isGameStarted && gd.randomSeed == randomSeed && randomSeed != 0;
+                    var s = _session();
+                    bool individualMode = !forceApplyInventory && (s?.Ruleset.UsesIndividualLoadouts ?? false);
+                    bool localHasTowers = gd.list_LoadoutTowerData != null && gd.list_LoadoutTowerData.Count > 0;
+                    bool localHasStorage = gd.list_ItemStorage != null && gd.list_ItemStorage.Count > 0;
+                    // Never preserve an empty client inventory; always hydrate when empty.
+                    bool preserveClientInventory = individualMode && localHasTowers && localHasStorage && gd.randomSeed == randomSeed && randomSeed != 0;
 
                     gd.randomSeed = randomSeed;
                     gd.isInitialized = isInit;
@@ -587,6 +627,7 @@ namespace EmberwardCoop.Sync
                         gd.itemCardLimit = itemLimit;
                         gd.drawCardPerRound = drawPerRound;
                     }
+                    // Core HP is always a single shared pool across the entire party.
                     gd.maxHP = maxHP;
                     gd.curHP = curHP;
                     gd.extraShield = extraShield;
@@ -599,36 +640,55 @@ namespace EmberwardCoop.Sync
 
                     if (!preserveClientInventory)
                     {
-                        if (gd.list_CollectedRelic != null)
+                        if (individualMode && !HasHydratedLocalStartLoadout)
                         {
-                            gd.list_CollectedRelic.Clear();
-                            for (int i = 0; i < rCount; i++) gd.list_CollectedRelic.Add((eItemType)relics[i]);
+                            // Hydrate client's own chosen Pre-Run Loadout instead of copying Host's inventory
+                            HasHydratedLocalStartLoadout = true;
+                            int peerSeed = unchecked(randomSeed ^ (_net.LocalPlayerId * 73856093));
+                            LoadoutCatalog.HydrateGameplayData(gd, (eCharacterType)charType, _net.LocalLoadout, peerSeed, forceOverwriteInventory: true);
                         }
-                        if (gd.list_PlayerDisabledRelic != null)
+                        else
                         {
-                            gd.list_PlayerDisabledRelic.Clear();
-                            for (int i = 0; i < drCount; i++) gd.list_PlayerDisabledRelic.Add((eItemType)disRelics[i]);
-                        }
-                        if (gd.list_LoadoutTowerData != null)
-                        {
-                            gd.list_LoadoutTowerData.Clear();
-                            for (int i = 0; i < lCount; i++)
-                                gd.list_LoadoutTowerData.Add(new TowerIngameData((eItemType)loadoutTypes[i], loadoutLevels[i]));
-                        }
-                        if (gd.list_CollectedTowerData != null)
-                        {
-                            gd.list_CollectedTowerData.Clear();
-                            for (int i = 0; i < cCount; i++)
-                                gd.list_CollectedTowerData.Add(new TowerIngameData((eItemType)collectedTypes[i], collectedLevels[i]));
-                        }
-                        if (gd.list_ItemStorage != null)
-                        {
-                            gd.list_ItemStorage.Clear();
-                            for (int i = 0; i < sCount; i++)
+                            if (gd.list_CollectedRelic != null)
                             {
-                                var cd = GameSerializers.MaterializeCard(storageCards[i]);
-                                if (cd != null) gd.list_ItemStorage.Add(cd);
+                                gd.list_CollectedRelic.Clear();
+                                for (int i = 0; i < rCount; i++) gd.list_CollectedRelic.Add((eItemType)relics[i]);
                             }
+                            if (gd.list_PlayerDisabledRelic != null)
+                            {
+                                gd.list_PlayerDisabledRelic.Clear();
+                                for (int i = 0; i < drCount; i++) gd.list_PlayerDisabledRelic.Add((eItemType)disRelics[i]);
+                            }
+                            if (gd.list_LoadoutTowerData != null && (lCount > 0 || !individualMode))
+                            {
+                                gd.list_LoadoutTowerData.Clear();
+                                for (int i = 0; i < lCount; i++)
+                                    gd.list_LoadoutTowerData.Add(new TowerIngameData((eItemType)loadoutTypes[i], loadoutLevels[i]));
+                            }
+                            if (gd.list_CollectedTowerData != null && (cCount > 0 || !individualMode))
+                            {
+                                gd.list_CollectedTowerData.Clear();
+                                for (int i = 0; i < cCount; i++)
+                                    gd.list_CollectedTowerData.Add(new TowerIngameData((eItemType)collectedTypes[i], collectedLevels[i]));
+                            }
+                            if (gd.list_ItemStorage != null && (sCount > 0 || !individualMode))
+                            {
+                                gd.list_ItemStorage.Clear();
+                                for (int i = 0; i < sCount; i++)
+                                {
+                                    var cd = GameSerializers.MaterializeCard(storageCards[i]);
+                                    if (cd != null) gd.list_ItemStorage.Add(cd);
+                                }
+                            }
+                        }
+
+                        // Final non-empty fallback if Host snapshot arrived before towers/blocks existed
+                        if ((gd.list_LoadoutTowerData == null || gd.list_LoadoutTowerData.Count == 0) ||
+                            (gd.list_ItemStorage == null || gd.list_ItemStorage.Count == 0))
+                        {
+                            var fallbackChoice = individualMode ? _net.LocalLoadout : s?.LobbySetup.HostSharedLoadout;
+                            int peerSeed = unchecked(randomSeed ^ (_net.LocalPlayerId * 73856093));
+                            LoadoutCatalog.HydrateGameplayData(gd, (eCharacterType)charType, fallbackChoice, peerSeed, forceOverwriteInventory: false);
                         }
                     }
                     if (syncedMgs != null) gd.mapGenerateSetting = syncedMgs;
@@ -671,7 +731,7 @@ namespace EmberwardCoop.Sync
                 bool seqChanged = sceneSeq != _lastClientSceneSeq && _lastClientSceneSeq != -1;
                 _lastClientSceneSeq = sceneSeq;
 
-                if (!string.IsNullOrEmpty(targetScene) && targetScene != "LoadingScene")
+                if (allowSceneTransition && !string.IsNullOrEmpty(targetScene) && targetScene != "LoadingScene")
                 {
                     if (localScene == "LoadingScene")
                     {
@@ -689,6 +749,28 @@ namespace EmberwardCoop.Sync
                     RefreshClientMapUI(syncedMap, selectedNodeIdx);
 
                 _session()?.Quests.OnClientQuestRefreshed(syncedQuest);
+            }
+        }
+
+        public void SendPeerInventoryRestore(int peerId, SavedPlayerStateDto dto)
+        {
+            if (!_net.IsHost || dto == null) return;
+            PeerSavedInventories[peerId] = dto;
+            _net.SendToPeer(peerId, PacketType.EvtPeerInventoryRestore, w => CoopSaveStorage.WritePlayerState(w, dto));
+        }
+
+        public void HandleEvtPeerInventoryRestore(BinaryReader r)
+        {
+            var dto = CoopSaveStorage.ReadPlayerState(r);
+            if (dto == null) return;
+            SoloSaveGuard.EnterCoopTempSession();
+            var gd = GameDataManager.instance?.GameplayData;
+            if (gd != null)
+            {
+                CoopSaveStorage.ApplySavedInventoryToGameplay(gd, dto);
+                HasHydratedLocalStartLoadout = true;
+                PendingRestoreCoin = dto.Coin;
+                CoopLogger.Info(LogCategory.Sync, $"Restored saved co-op inventory ({dto.LoadoutTowers.Count} towers, {dto.StorageCards.Count} cards).");
             }
         }
 
@@ -749,78 +831,18 @@ namespace EmberwardCoop.Sync
         }
 
         public void SendSelectOrVoteMapNode(int nodeIndex, bool isBattleNode)
-        {
-            if (!_net.IsClient) return;
-            // Clients vote on non-battle nodes or request entering battle nodes
-            _net.SendToHost(PacketType.CmdVoteMapNode, w => w.Write(nodeIndex));
-            if (isBattleNode)
-                _net.SendToHost(PacketType.CmdSelectMapNode, w => w.Write(nodeIndex));
-        }
+            => _session()?.Votes.CastMapNodeVote(nodeIndex);
 
         public void HandleCmdVoteMapNode(int senderId, BinaryReader r)
-        {
-            int nodeIdx = r.ReadInt32();
-            MapNodeVotes[senderId] = nodeIdx;
-            string pName = _net.GetPlayerName(senderId);
-            CoopLogger.Info(LogCategory.Sync, $"{pName} voted for Map Node #{nodeIdx}.");
-            GameRefs.ShowGameToast($"{pName} suggests Map Node #{nodeIdx}", 2.5f);
-            BroadcastMapVotes();
-        }
+            => _session()?.Votes.HandleCmdVoteMapNode(senderId, r);
 
         public void BroadcastMapVotes()
-        {
-            if (!_net.IsHost) return;
-            _net.BroadcastToClients(PacketType.EvtMapNodeVotes, w =>
-            {
-                w.Write(MapNodeVotes.Count);
-                foreach (var kv in MapNodeVotes)
-                {
-                    w.Write(kv.Key);
-                    w.Write(kv.Value);
-                }
-            });
-            OnMapVotesChanged?.Invoke();
-        }
+            => _session()?.Votes.BroadcastMapVotes();
 
         public void HandleEvtMapNodeVotes(BinaryReader r)
-        {
-            int count = r.ReadInt32();
-            MapNodeVotes.Clear();
-            for (int i = 0; i < count; i++)
-            {
-                int pid = r.ReadInt32();
-                int nodeIdx = r.ReadInt32();
-                MapNodeVotes[pid] = nodeIdx;
-            }
-            OnMapVotesChanged?.Invoke();
-        }
+            => _session()?.Votes.HandleEvtMapNodeVotes(r);
 
         public void HandleCmdSelectMapNode(int senderId, BinaryReader r)
-        {
-            int nodeIndex = r.ReadInt32();
-            var msp = GameRefs.GetMapSceneProcess();
-            var nodes = msp?.mapManager?.list_MapNodes;
-            if (nodes == null || nodeIndex < 0 || nodeIndex >= nodes.Count) return;
-
-            var clicked = nodes[nodeIndex];
-            if (clicked == null || clicked.mapNodeData == null) return;
-
-            // Only allow clients to directly trigger battle/boss nodes; non-battle modals are opened by Host
-            var st = clicked.mapNodeData.MapNodeType;
-            bool isCombatNode = st == eStageType.BATTLE || st == eStageType.BATTLE_CORRUPTED ||
-                                st == eStageType.BATTLE_ANOMALY || st == eStageType.BATTLE_DARKNESS ||
-                                st == eStageType.BOSS || st == eStageType.MID_BOSS;
-            if (!isCombatNode) return;
-
-            string pName = _net.GetPlayerName(senderId);
-            CoopLogger.Info(LogCategory.Sync, $"{pName} entered Map Node #{nodeIndex} ({st}).");
-            HostSelectedMapNodeIndex = nodeIndex;
-            MapNodeVotes.Clear();
-            using (NetworkScope.Enter())
-            {
-                msp.OnClickMapNodeButton(clicked);
-            }
-            BroadcastRunSnapshot(-1);
-        }
+            => _session()?.Votes.HandleCmdVoteMapNode(senderId, r);
     }
 }

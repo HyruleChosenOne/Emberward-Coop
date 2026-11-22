@@ -32,8 +32,8 @@ namespace EmberwardCoop.Patches
                     }
                     if (S.Run != null)
                     {
-                        int salt = S.Ruleset.ComputeDraftSeedSalt(S.Net.LocalPlayerId);
-                        if (salt != 0) UnityEngine.Random.InitState(unchecked(S.Run.PendingStageSeed ^ salt ^ Environment.TickCount));
+                        int detSeed = S.Votes.GetNextDeterministicDraftSeed(S.Run.PendingStageSeed, S.Net.LocalPlayerId);
+                        UnityEngine.Random.InitState(detSeed);
                     }
                 }
                 else if (__instance.TryCast<UI_AddRuneToTetrisCard_Popup>() != null ||
@@ -63,7 +63,16 @@ namespace EmberwardCoop.Patches
                     S.Ownership.BroadcastRunStats();
                     S.Modals.BroadcastVictoryOrDefeat(isVictory: false, isFinalBoss: false);
                     var gd = GameDataManager.instance?.GameplayData;
-                    S.Quests.BroadcastMetaRewardGrant(25, false, false, gd != null ? gd.curWorld : eWorldType.WORLD_1_FOREST, gd != null ? gd.difficulty : eGameDifficultyType.NORMAL);
+                    var id = GameDataManager.instance?.IntermediateData;
+                    S.Quests.BroadcastMetaRewardGrant(
+                        25,
+                        isStageVictory: false,
+                        isFinalBossVictory: false,
+                        worldType: gd != null ? gd.curWorld : eWorldType.WORLD_1_FOREST,
+                        difficulty: gd != null ? gd.difficulty : eGameDifficultyType.NORMAL,
+                        stageType: id != null ? id.stageType : eStageType.BATTLE,
+                        mapStep: gd != null ? gd.curMapStep : 0,
+                        characterType: gd != null ? gd.characterType : S.LobbySetup.HostHero);
                 }
                 UI.PostRunSummaryOverlay.AttachToPopup(__instance.transform, isVictory: false);
             }

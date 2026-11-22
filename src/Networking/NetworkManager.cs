@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using EmberwardCoop.Core;
+using EmberwardCoop.Rules;
 
 namespace EmberwardCoop.Networking
 {
@@ -25,6 +26,7 @@ namespace EmberwardCoop.Networking
         public string HostPlayerName { get; private set; } = "Host";
         public int LocalColorIndex { get; private set; } = 0;
         public string LocalAvatarHeroId { get; private set; } = "BASIC";
+        public PlayerLoadoutChoice LocalLoadout { get; private set; } = new PlayerLoadoutChoice();
         public int PingMs => _active?.LocalPingMs ?? 0;
         public string StatusText => _active?.StatusText ?? "Offline";
         public string LobbyCode => _active?.LobbyCode ?? "";
@@ -38,6 +40,7 @@ namespace EmberwardCoop.Networking
         public event Action<string> OnConnectionError;
         public event Action OnRosterUpdated;
         public event Action OnLobbyListUpdated;
+        public event Action OnPeerUnlocksUpdated;
 
         public bool LastDisconnectWasIntentional { get; private set; }
 
@@ -93,6 +96,7 @@ namespace EmberwardCoop.Networking
             {
                 if (_active != transport) return;
                 CoopLogger.Info(LogCategory.Net, "Transport connected to Host; sending handshake...");
+                var localUnlocks = PlayerUnlockSummary.CaptureLocal();
                 SendToHost(PacketType.HandshakeHello, w =>
                 {
                     w.Write(PacketProtocol.ProtocolVersion);
@@ -101,6 +105,8 @@ namespace EmberwardCoop.Networking
                     w.Write(LocalColorIndex);
                     w.Write(SteamP2PTransport.GetLocalSteamId());
                     w.WriteSafeString(LocalAvatarHeroId);
+                    (LocalLoadout ?? new PlayerLoadoutChoice()).Write(w);
+                    localUnlocks.Write(w);
                 });
             };
 
@@ -189,8 +195,11 @@ namespace EmberwardCoop.Networking
                 AvatarHeroId = LocalAvatarHeroId,
                 PingMs = 0,
                 IsReady = true,
-                SteamId = SteamP2PTransport.GetLocalSteamId()
+                SteamId = SteamP2PTransport.GetLocalSteamId(),
+                Loadout = (LocalLoadout ?? new PlayerLoadoutChoice()).Clone(),
+                Unlocks = PlayerUnlockSummary.CaptureLocal()
             };
+            OnPeerUnlocksUpdated?.Invoke();
             OnRosterUpdated?.Invoke();
         }
 
@@ -300,6 +309,14 @@ namespace EmberwardCoop.Networking
                     if (IsHost) HandleCmdSetAvatar(pkt.SenderPlayerId, pkt.Payload);
                     return;
 
+                case PacketType.CmdSetLoadout:
+                    if (IsHost) HandleCmdSetLoadout(pkt.SenderPlayerId, pkt.Payload);
+                    return;
+
+                case PacketType.CmdSyncUnlockSummary:
+                    if (IsHost) HandleCmdSyncUnlockSummary(pkt.SenderPlayerId, pkt.Payload);
+                    return;
+
                 default:
                     _packetHandler?.Invoke(pkt);
                     break;
@@ -316,6 +333,8 @@ namespace EmberwardCoop.Networking
             int prefColor = r.ReadInt32();
             ulong steamId = r.ReadUInt64();
             string avatarId = ms.Position < ms.Length ? UI.NativeAssetRegistry.NormalizeHeroId(r.ReadString()) : "BASIC";
+            var peerLoadout = ms.Position < ms.Length ? PlayerLoadoutChoice.Read(r) : new PlayerLoadoutChoice();
+            var peerUnlocks = ms.Position < ms.Length ? PlayerUnlockSummary.Read(r) : new PlayerUnlockSummary();
 
             if (protoVer != PacketProtocol.ProtocolVersion)
             {
@@ -335,7 +354,9 @@ namespace EmberwardCoop.Networking
                 AvatarHeroId = avatarId,
                 PingMs = 0,
                 IsReady = false,
-                SteamId = steamId
+                SteamId = steamId,
+                Loadout = peerLoadout,
+                Unlocks = peerUnlocks
             };
             Roster[peerId] = peer;
 
@@ -348,6 +369,7 @@ namespace EmberwardCoop.Networking
 
             CoopLogger.Info(LogCategory.Net, $"{cleanName} (#{peerId}) joined via {ActiveTransportKind}.");
             CoopLogger.PushChatMessage(ChatEntryKind.ConnectionSuccess, Localization.CoopLoc.F("chat.player_connected", cleanName));
+            OnPeerUnlocksUpdated?.Invoke();
             BroadcastRoster();
             OnPlayerJoined?.Invoke(peer);
             OnRosterUpdated?.Invoke();
@@ -400,9 +422,63 @@ namespace EmberwardCoop.Networking
             using var ms = new MemoryStream(payload);
             using var r = new BinaryReader(ms, Encoding.UTF8);
             int requested = Math.Clamp(r.ReadInt32(), 0, CoopConfig.PlayerPalette.Length - 1);
-            peer.ColorIndex = requested;
+            peer.ColorIndex = AllocateColorForPeer(requested, peerId);
             BroadcastRoster();
             OnRosterUpdated?.Invoke();
+        }
+
+        private void HandleCmdSetLoadout(int peerId, byte[] payload)
+        {
+            if (!Roster.TryGetValue(peerId, out var peer)) return;
+            using var ms = new MemoryStream(payload);
+            using var r = new BinaryReader(ms, Encoding.UTF8);
+            peer.Loadout = PlayerLoadoutChoice.Read(r);
+            BroadcastRoster();
+            OnRosterUpdated?.Invoke();
+        }
+
+        private void HandleCmdSyncUnlockSummary(int peerId, byte[] payload)
+        {
+            if (!Roster.TryGetValue(peerId, out var peer)) return;
+            using var ms = new MemoryStream(payload);
+            using var r = new BinaryReader(ms, Encoding.UTF8);
+            peer.Unlocks = PlayerUnlockSummary.Read(r);
+            OnPeerUnlocksUpdated?.Invoke();
+            OnRosterUpdated?.Invoke();
+        }
+
+        public void SetLocalLoadout(PlayerLoadoutChoice loadout)
+        {
+            LocalLoadout = (loadout ?? new PlayerLoadoutChoice()).Clone();
+            if (!IsConnected) return;
+            if (IsHost)
+            {
+                if (Roster.TryGetValue(0, out var me)) me.Loadout = LocalLoadout.Clone();
+                BroadcastRoster();
+                OnRosterUpdated?.Invoke();
+            }
+            else
+            {
+                if (Roster.TryGetValue(LocalPlayerId, out var me)) me.Loadout = LocalLoadout.Clone();
+                SendToHost(PacketType.CmdSetLoadout, w => LocalLoadout.Write(w));
+                OnRosterUpdated?.Invoke();
+            }
+        }
+
+        public void SendLocalUnlockSummary()
+        {
+            var summary = PlayerUnlockSummary.CaptureLocal();
+            if (!IsConnected) return;
+            if (IsHost)
+            {
+                if (Roster.TryGetValue(0, out var me)) me.Unlocks = summary;
+                OnPeerUnlocksUpdated?.Invoke();
+            }
+            else
+            {
+                if (Roster.TryGetValue(LocalPlayerId, out var me)) me.Unlocks = summary;
+                SendToHost(PacketType.CmdSyncUnlockSummary, w => summary.Write(w));
+            }
         }
 
         private void HandleCmdSetAvatar(int peerId, byte[] payload)
@@ -473,7 +549,17 @@ namespace EmberwardCoop.Networking
             if (!IsConnected) return;
             if (IsHost)
             {
-                if (Roster.TryGetValue(0, out var me)) me.ColorIndex = LocalColorIndex;
+                if (Roster.TryGetValue(0, out var me))
+                    me.ColorIndex = LocalColorIndex;
+
+                // Automatically reassign any client currently using the Host's newly chosen color.
+                foreach (var kv in Roster)
+                {
+                    if (kv.Key == 0) continue;
+                    if (kv.Value.ColorIndex == LocalColorIndex)
+                        kv.Value.ColorIndex = AllocateColorForPeer((LocalColorIndex + 1) % CoopConfig.PlayerPalette.Length, kv.Key);
+                }
+
                 BroadcastRoster();
                 OnRosterUpdated?.Invoke();
             }
@@ -530,8 +616,10 @@ namespace EmberwardCoop.Networking
                     w.Write(p.PingMs);
                     w.Write(p.IsReady);
                     w.Write(p.IsWaveReady);
+                    w.Write(p.IsDraftingBusy);
                     w.WriteSafeString(p.ActiveModal);
                     w.Write(p.SteamId);
+                    (p.Loadout ?? new PlayerLoadoutChoice()).Write(w);
                 }
             });
         }
@@ -553,13 +641,16 @@ namespace EmberwardCoop.Networking
                     PingMs = r.ReadInt32(),
                     IsReady = r.ReadBoolean(),
                     IsWaveReady = r.ReadBoolean(),
+                    IsDraftingBusy = r.ReadBoolean(),
                     ActiveModal = r.ReadString(),
-                    SteamId = r.ReadUInt64()
+                    SteamId = r.ReadUInt64(),
+                    Loadout = PlayerLoadoutChoice.Read(r)
                 };
                 if (p.PlayerId == LocalPlayerId)
                 {
                     LocalColorIndex = p.ColorIndex;
                     LocalAvatarHeroId = p.AvatarHeroId;
+                    LocalLoadout = p.Loadout.Clone();
                 }
                 if (p.PlayerId == 0) HostPlayerName = p.Name;
                 Roster[p.PlayerId] = p;
@@ -574,23 +665,26 @@ namespace EmberwardCoop.Networking
             OnRosterUpdated?.Invoke();
         }
 
-        private int AllocateColor(int preferred)
+        private int AllocateColor(int preferred) => AllocateColorForPeer(preferred, -1);
+
+        private int AllocateColorForPeer(int preferred, int excludePeerId)
         {
             int paletteLen = CoopConfig.PlayerPalette.Length;
             int pref = Math.Clamp(preferred, 0, paletteLen - 1);
             bool used = false;
             foreach (var p in Roster.Values)
-                if (p.ColorIndex == pref) { used = true; break; }
+                if (p.PlayerId != excludePeerId && p.ColorIndex == pref) { used = true; break; }
             if (!used) return pref;
 
-            for (int i = 0; i < paletteLen; i++)
+            for (int step = 1; step < paletteLen; step++)
             {
+                int idx = (pref + step) % paletteLen;
                 bool taken = false;
                 foreach (var p in Roster.Values)
-                    if (p.ColorIndex == i) { taken = true; break; }
-                if (!taken) return i;
+                    if (p.PlayerId != excludePeerId && p.ColorIndex == idx) { taken = true; break; }
+                if (!taken) return idx;
             }
-            return Roster.Count % paletteLen;
+            return pref;
         }
 
         public void SendToHost(PacketType type, Action<BinaryWriter> write = null, DeliveryMode mode = DeliveryMode.ReliableOrdered)

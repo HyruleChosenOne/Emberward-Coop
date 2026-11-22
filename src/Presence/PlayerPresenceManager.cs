@@ -230,6 +230,8 @@ namespace EmberwardCoop.Presence
                         av.TagRect.anchoredPosition = NativeStyleProvider.ScreenToCanvasLocal(new Vector2(sp.x, sp.y));
                         if (av.TagText != null)
                         {
+                            Color curCol = CoopConfig.GetPlayerColor(_net.GetPlayerColorIndex(av.PlayerId));
+                            av.TagText.color = curCol;
                             av.TagText.text = av.IsPlacing && av.PlacingItemType > 0
                                 ? $"{av.PlayerName} ({FormatShortItemName((eItemType)av.PlacingItemType)})"
                                 : av.PlayerName;

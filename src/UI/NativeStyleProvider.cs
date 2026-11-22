@@ -638,9 +638,8 @@ namespace EmberwardCoop.UI
             var frameImg = frameGo.AddComponent<Image>();
             Sprite frameSprite = NativeAssetRegistry.GetAvatarFrameSprite(selected);
             ApplySpriteSmart(frameImg, frameSprite, preferSliced: true);
-            frameImg.color = selected
-                ? EmberGold
-                : Color.Lerp(playerColor, EmberGold, 0.18f);
+            // Keep character portraits and portrait frames neutral/untinted; player colors apply to names only.
+            frameImg.color = selected ? EmberGold : EmberBorder;
             frameImg.preserveAspect = !NativeAssetRegistry.HasValid9SliceBorder(frameSprite);
             frameImg.raycastTarget = false;
 

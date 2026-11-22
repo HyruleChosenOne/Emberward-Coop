@@ -17,6 +17,8 @@ namespace EmberwardCoop.Networking
         CmdSetColor = 8,
         ChatMessage = 9,
         CmdSetAvatar = 10,
+        CmdSetLoadout = 11,
+        CmdSyncUnlockSummary = 12,
 
         RunSnapshot = 20,
         RequestFullSync = 21,
@@ -24,6 +26,7 @@ namespace EmberwardCoop.Networking
         BoardSnapshot = 23,
         EvtStateHash = 24,
         CmdDesyncReport = 25,
+        EvtPeerInventoryRestore = 26,
 
         CmdPlaceTetris = 40,
         EvtPlaceTetris = 41,
@@ -64,8 +67,16 @@ namespace EmberwardCoop.Networking
         EvtMapNodeVotes = 121,
         CmdSelectMapNode = 122,
         EvtModalState = 123,
+        EvtMapNodeResolved = 124,
         EvtModalClosed = 125,
         EvtVictoryOrDefeat = 126,
+        EvtOpenPeerNodeModal = 127,
+        EvtSharedDraftState = 128,
+        CmdDraftVote = 129,
+        CmdDraftReroll = 130,
+        EvtSharedDraftClosed = 131,
+        CmdDraftBarrierState = 132,
+        EvtDraftBarrierState = 133,
 
         EvtQuestSnapshot = 150,
         EvtQuestProgress = 151,

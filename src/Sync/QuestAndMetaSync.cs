@@ -184,13 +184,41 @@ namespace EmberwardCoop.Sync
             BroadcastQuestSnapshot(senderId);
         }
 
-        public void BroadcastMetaRewardGrant(int expEarned, bool isStageVictory, bool isFinalBossVictory, eWorldType worldType, eGameDifficultyType difficulty)
+        public void BroadcastMetaRewardGrant(
+            int expEarned,
+            bool isStageVictory,
+            bool isFinalBossVictory,
+            eWorldType worldType,
+            eGameDifficultyType difficulty,
+            eStageType stageType = eStageType.BATTLE,
+            int mapStep = 0,
+            eCharacterType characterType = eCharacterType.BASIC)
         {
-            if (!_net.IsHost || _net.RemotePeerCount == 0) return;
+            if (!_net.IsHost) return;
 
             var gd = GameDataManager.instance?.GameplayData;
             var towers = gd?.list_CollectedTowerData;
             var relics = gd?.list_CollectedRelic;
+            var towerArr = new eItemType[towers?.Count ?? 0];
+            for (int i = 0; i < towerArr.Length; i++) towerArr[i] = towers[i] != null ? towers[i].ItemType : eItemType.NONE;
+            var relicArr = new eItemType[relics?.Count ?? 0];
+            for (int i = 0; i < relicArr.Length; i++) relicArr[i] = relics[i];
+
+            // Commit solo meta-progression cleanly for Host too (Host also runs on isolated tempSession).
+            ApplyMetaProgressionToSoloProfile(
+                expEarned,
+                isStageVictory,
+                isFinalBossVictory,
+                worldType,
+                difficulty,
+                stageType,
+                mapStep,
+                characterType,
+                towerArr,
+                relicArr,
+                isHostLocal: true);
+
+            if (_net.RemotePeerCount == 0) return;
 
             _net.BroadcastToClients(PacketType.EvtMetaRewardGrant, w =>
             {
@@ -199,26 +227,30 @@ namespace EmberwardCoop.Sync
                 w.Write(isFinalBossVictory);
                 w.Write((int)worldType);
                 w.Write((int)difficulty);
+                w.Write((int)stageType);
+                w.Write(mapStep);
+                w.Write((int)characterType);
 
-                int tCount = towers?.Count ?? 0;
-                w.Write(tCount);
-                for (int i = 0; i < tCount; i++) w.Write(towers[i] != null ? (int)towers[i].ItemType : 0);
+                w.Write(towerArr.Length);
+                for (int i = 0; i < towerArr.Length; i++) w.Write((int)towerArr[i]);
 
-                int rCount = relics?.Count ?? 0;
-                w.Write(rCount);
-                for (int i = 0; i < rCount; i++) w.Write((int)relics[i]);
+                w.Write(relicArr.Length);
+                for (int i = 0; i < relicArr.Length; i++) w.Write((int)relicArr[i]);
             });
 
-            CoopLogger.Info(LogCategory.Quest, $"Granted co-op meta-progression to clients (+{expEarned} EXP, victory={isStageVictory}, boss={isFinalBossVictory}).");
+            CoopLogger.Info(LogCategory.Quest, $"Granted co-op meta-progression to party (+{expEarned} EXP, victory={isStageVictory}, boss={isFinalBossVictory}, {worldType}/{difficulty}).");
         }
 
         public void HandleEvtMetaRewardGrant(BinaryReader r)
         {
             int expEarned = r.ReadInt32();
-            _ = r.ReadBoolean();
+            bool isStageVictory = r.ReadBoolean();
             bool isFinalBossVictory = r.ReadBoolean();
-            _ = (eWorldType)r.ReadInt32();
+            var worldType = (eWorldType)r.ReadInt32();
             var difficulty = (eGameDifficultyType)r.ReadInt32();
+            var stageType = (eStageType)r.ReadInt32();
+            int mapStep = r.ReadInt32();
+            var characterType = (eCharacterType)r.ReadInt32();
 
             int tCount = r.ReadInt32();
             var towerTypes = new eItemType[tCount];
@@ -230,16 +262,48 @@ namespace EmberwardCoop.Sync
 
             if (!CoopConfig.AllowClientMetaProgression.Value) return;
 
+            ApplyMetaProgressionToSoloProfile(
+                expEarned,
+                isStageVictory,
+                isFinalBossVictory,
+                worldType,
+                difficulty,
+                stageType,
+                mapStep,
+                characterType,
+                towerTypes,
+                relicTypes,
+                isHostLocal: false);
+        }
+
+        private static void ApplyMetaProgressionToSoloProfile(
+            int expEarned,
+            bool isStageVictory,
+            bool isFinalBossVictory,
+            eWorldType worldType,
+            eGameDifficultyType difficulty,
+            eStageType stageType,
+            int mapStep,
+            eCharacterType characterType,
+            eItemType[] towerTypes,
+            eItemType[] relicTypes,
+            bool isHostLocal)
+        {
             var gdm = GameDataManager.instance;
             var pld = gdm?.Playerdata;
             if (gdm == null || pld == null) return;
 
             using (NetworkScope.Enter())
+            using (Rules.PartyUnlockResolver.EnterRealUnlockRead())
             {
                 try
                 {
-                    if (expEarned > 0)
+                    // Avoid double-granting EXP on Host if vanilla Victory already awarded it directly to Playerdata.
+                    if (!isHostLocal && expEarned > 0)
+                    {
                         pld.OnRequestAddExp(expEarned);
+                        try { pld.playerRecord?.AddTotalExperience(expEarned); } catch { }
+                    }
 
                     for (int i = 0; i < towerTypes.Length; i++)
                     {
@@ -258,29 +322,81 @@ namespace EmberwardCoop.Sync
                         }
                     }
 
+                    // Record stage / boss clear into solo PlayerLifetimeData so earned world & difficulty unlocks persist.
+                    if (!isHostLocal)
+                    {
+                        try
+                        {
+                            pld.stageRecord?.RecordStageEnd(difficulty, worldType, stageType, mapStep, isStageVictory);
+                        }
+                        catch { }
+
+                        try
+                        {
+                            if (isStageVictory)
+                            {
+                                pld.playerRecord?.AddClearedLevels(1);
+                                if (stageType == eStageType.BATTLE_CORRUPTED) pld.playerRecord?.AddClearedCorruptedLevels(1);
+                                else if (stageType == eStageType.BATTLE_ANOMALY) pld.playerRecord?.AddClearedVariantLevels(1);
+                                else if (stageType == eStageType.BATTLE_DARKNESS) pld.playerRecord?.AddClearedDarknessLevels(1);
+                                else pld.playerRecord?.AddClearedNormalLevels(1);
+                            }
+                        }
+                        catch { }
+                    }
+
                     if (isFinalBossVictory)
                     {
                         if (difficulty == eGameDifficultyType.CASUAL) pld.isDefeatedCasualModeBoss = true;
                         else if (difficulty == eGameDifficultyType.NORMAL) pld.isDefeatedNormalModeBoss = true;
                         else if (difficulty == eGameDifficultyType.HEROIC || difficulty == eGameDifficultyType.NIGHTMARE) pld.isDefeatedHeroicModeBoss = true;
-                    }
 
-                    // Clients run on tempSessionData, so SaveData(false) commits PlayerLifetimeData without modifying their solo save.
-                    if (gdm.doUseTempSessionData)
-                    {
-                        using (NetworkScope.EnterClientMetaSave())
+                        try
                         {
-                            gdm.SaveData(false);
+                            var misc = pld.miscRecord;
+                            if (misc != null && characterType != eCharacterType.NONE)
+                            {
+                                if (difficulty == eGameDifficultyType.CASUAL) misc.Character_BaseModeClear_Casual?.RecordCharacterClear(characterType, worldType, difficulty);
+                                else if (difficulty == eGameDifficultyType.NORMAL) misc.Character_BaseModeClear_Normal?.RecordCharacterClear(characterType, worldType, difficulty);
+                                else misc.Character_BaseModeClear_Heroic?.RecordCharacterClear(characterType, worldType, difficulty);
+                            }
+                        }
+                        catch { }
+
+                        if (!isHostLocal)
+                        {
+                            try
+                            {
+                                pld.playerRecord?.AddBossKills(1);
+                                pld.playerRecord?.AddGamesWin(1, false);
+                                pld.runRecord?.AddRunRecord(true);
+                            }
+                            catch { }
                         }
                     }
+                    else if (!isStageVictory && !isHostLocal)
+                    {
+                        try
+                        {
+                            pld.playerRecord?.AddGamesLost(1);
+                            pld.runRecord?.AddRunRecord(false);
+                        }
+                        catch { }
+                    }
 
-                    CoopLogger.Info(LogCategory.Quest, $"Co-op rewards saved to profile: +{expEarned} EXP!");
-                    if (expEarned > 0)
-                        GameRefs.ShowGameToast($"Co-op Profile Saved (+{expEarned} EXP)", 3.0f);
+                    // Persist ONLY PlayerLifetimeData (never tempSession GameplayData or memory-only UnlockAll).
+                    SoloSaveGuard.CommitSoloProfileMetaSave();
+
+                    if (!isHostLocal)
+                    {
+                        CoopLogger.Info(LogCategory.Quest, $"Saved co-op meta-progression to solo profile (+{expEarned} EXP, {worldType}/{difficulty}, win={isStageVictory}, boss={isFinalBossVictory}).");
+                        if (expEarned > 0 || isFinalBossVictory)
+                            GameRefs.ShowGameToast($"Co-op Profile Saved (+{expEarned} EXP)", 3.0f);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    CoopLogger.Warn(LogCategory.Quest, $"Client meta-progression commit warning: {ex.Message}");
+                    CoopLogger.Warn(LogCategory.Quest, $"Meta-progression commit warning: {ex.Message}");
                 }
             }
         }

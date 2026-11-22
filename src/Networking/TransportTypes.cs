@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using EmberwardCoop.Rules;
 
 namespace EmberwardCoop.Networking
 {
@@ -68,8 +69,11 @@ namespace EmberwardCoop.Networking
         public int PingMs;
         public bool IsReady;
         public bool IsWaveReady;
+        public bool IsDraftingBusy;
         public string ActiveModal = "";
         public ulong SteamId;
+        public PlayerLoadoutChoice Loadout = new PlayerLoadoutChoice();
+        public PlayerUnlockSummary Unlocks = new PlayerUnlockSummary();
         public bool IsHost => PlayerId == 0;
     }
 

@@ -195,6 +195,7 @@ namespace EmberwardCoop.Sync
             _session()?.Economy.CheckHostEconomyAndHand(force: true);
             _session()?.Quests.BroadcastQuestProgress();
             _session()?.Ownership.BroadcastRunStats();
+            _session()?.SaveActiveCoopRun($"wave_{round}");
         }
 
         public void HandleEvtWaveEnd(BinaryReader r)

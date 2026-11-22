@@ -29,6 +29,8 @@ namespace EmberwardCoop.Rules
             public int GiftPerWaveCap { get; set; }
             public int DraftMode { get; set; }
             public int SpeedControl { get; set; }
+            public bool SharedLoadoutsInSharedMode { get; set; } = true;
+            public bool UnlockAllMapsModes { get; set; }
         }
 
         public static string GetPresetsDirectory()
@@ -78,7 +80,9 @@ namespace EmberwardCoop.Rules
                     AllowResourceGifting = s.AllowResourceGifting,
                     GiftPerWaveCap = s.GiftPerWaveCap,
                     DraftMode = (int)s.DraftMode,
-                    SpeedControl = (int)s.SpeedControl
+                    SpeedControl = (int)s.SpeedControl,
+                    SharedLoadoutsInSharedMode = s.SharedLoadoutsInSharedMode,
+                    UnlockAllMapsModes = s.UnlockAllMapsModes
                 };
                 string path = Path.Combine(GetPresetsDirectory(), safe + ".json");
                 File.WriteAllText(path, JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true }));
@@ -119,6 +123,8 @@ namespace EmberwardCoop.Rules
                 target.GiftPerWaveCap = Math.Max(0, dto.GiftPerWaveCap);
                 target.DraftMode = (DraftSyncMode)dto.DraftMode;
                 target.SpeedControl = (SpeedControlRule)dto.SpeedControl;
+                target.SharedLoadoutsInSharedMode = dto.SharedLoadoutsInSharedMode;
+                target.UnlockAllMapsModes = dto.UnlockAllMapsModes;
                 CoopLogger.Info(LogCategory.Sync, $"Loaded custom preset '{safe}'.");
                 return true;
             }

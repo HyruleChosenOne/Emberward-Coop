@@ -84,6 +84,16 @@ namespace EmberwardCoop.Rules
             }
         };
 
+        public static readonly eWorldType[] AllBaseWorldTypes =
+        {
+            eWorldType.WORLD_1_FOREST,
+            eWorldType.WORLD_2_DESERT,
+            eWorldType.WORLD_3_MOUNTAIN,
+            eWorldType.WORLD_4_DEPTH,
+            eWorldType.WORLD_5_COSMO,
+            eWorldType.WORLD_100_CHAOS_REALM
+        };
+
         public static readonly eGameDifficultyType[] AllDifficulties =
         {
             eGameDifficultyType.CASUAL,
@@ -92,7 +102,31 @@ namespace EmberwardCoop.Rules
             eGameDifficultyType.NIGHTMARE
         };
 
-        public static List<WorldEntryInfo> GetHostSelectableWorlds(eGameDifficultyType difficulty)
+        public static int GetBaseWorldIndex(eWorldType world)
+        {
+            for (int i = 0; i < AllBaseWorldTypes.Length; i++)
+                if (AllBaseWorldTypes[i] == world) return i;
+            return -1;
+        }
+
+        public static List<eGameDifficultyType> GetPartySelectableDifficulties(PartyUnlockResolver resolver)
+        {
+            var result = new List<eGameDifficultyType>();
+            for (int i = 0; i < AllDifficulties.Length; i++)
+            {
+                var d = AllDifficulties[i];
+                if (resolver == null || resolver.IsDifficultyUnlockedForParty(d))
+                    result.Add(d);
+            }
+            if (result.Count == 0)
+            {
+                result.Add(eGameDifficultyType.CASUAL);
+                result.Add(eGameDifficultyType.NORMAL);
+            }
+            return result;
+        }
+
+        public static List<WorldEntryInfo> GetHostSelectableWorlds(eGameDifficultyType difficulty, PartyUnlockResolver resolver = null)
         {
             var result = new List<WorldEntryInfo>();
             var pld = GameDataManager.instance?.Playerdata;
@@ -106,16 +140,25 @@ namespace EmberwardCoop.Rules
 
                 if (pld != null)
                 {
-                    try
+                    using (PartyUnlockResolver.EnterRealUnlockRead())
                     {
-                        implemented = pld.IsWorldImplemented(bw.WorldType);
-                        unlocked = bw.WorldType == eWorldType.WORLD_1_FOREST
-                            || pld.IsWorldUnlocked(difficulty, bw.WorldType)
-                            || pld.IsWorldUnlockedInAnyDifficulty(bw.WorldType);
-                        cleared = pld.IsWorldCleared(difficulty, bw.WorldType)
-                            || pld.IsWorldClearedInAnyDifficulty(bw.WorldType);
+                        try
+                        {
+                            implemented = pld.IsWorldImplemented(bw.WorldType);
+                            unlocked = unlocked
+                                || pld.IsWorldUnlocked(difficulty, bw.WorldType)
+                                || pld.IsWorldUnlockedInAnyDifficulty(bw.WorldType);
+                            cleared = pld.IsWorldCleared(difficulty, bw.WorldType)
+                                || pld.IsWorldClearedInAnyDifficulty(bw.WorldType);
+                        }
+                        catch { }
                     }
-                    catch { }
+                }
+
+                if (resolver != null)
+                {
+                    unlocked = unlocked || resolver.IsWorldUnlockedForParty(bw.WorldType);
+                    cleared = cleared || resolver.PartyBaseline.IsWorldClearedBitSet(i);
                 }
 
                 if (!implemented) continue;
@@ -243,6 +286,12 @@ namespace EmberwardCoop.Rules
                     : (s.GiftPerWaveCap > 0 ? $"{s.GiftPerWaveCap}g" : CoopLoc.T("settings.val_unlimited"));
                 parts.Add($"{CoopLoc.T("settings.gifting")} {giftStr}");
             }
+
+            if (s.EconomyMode == CoopEconomyMode.SharedResources && !s.SharedLoadoutsInSharedMode)
+                parts.Add(CoopLoc.T("settings.val_individual_loadouts"));
+
+            if (s.UnlockAllMapsModes)
+                parts.Add(CoopLoc.T("lobby.unlock_all_badge"));
 
             if (s.BlockPacing == BlockPacingRule.SharedTurnBlockCap)
                 parts.Add($"{CoopLoc.T("settings.block_pacing")} {s.SharedTurnBlockCap}");

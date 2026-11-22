@@ -12,6 +12,7 @@ namespace EmberwardCoop.Core
         private SessionController _session;
         private CoopLobbyPanel _lobbyPanel;
         private CoopHudOverlay _hudOverlay;
+        private CoopVoteAndDraftOverlay _voteDraftOverlay;
         private DisconnectSafetyModal _disconnectModal;
         private CoopSettingsModal _settingsModal;
 
@@ -27,6 +28,7 @@ namespace EmberwardCoop.Core
                 _disconnectModal = new DisconnectSafetyModal(_session);
                 _lobbyPanel = new CoopLobbyPanel(_session);
                 _hudOverlay = new CoopHudOverlay(_session, _lobbyPanel);
+                _voteDraftOverlay = new CoopVoteAndDraftOverlay(_session);
 
                 _session.OnMidWavePeerDisconnect += name => _disconnectModal?.TriggerForDisconnect(name);
                 _session.OnPeerReconnected += name => _disconnectModal?.OnPeerReconnected(name);
@@ -72,7 +74,8 @@ namespace EmberwardCoop.Core
             CoopInputGuard.IsCoopModalOpen =
                 (_lobbyPanel?.IsOpen ?? false) ||
                 (_settingsModal?.IsOpen ?? false) ||
-                (_disconnectModal?.IsOpen ?? false);
+                (_disconnectModal?.IsOpen ?? false) ||
+                (_voteDraftOverlay?.IsBlockingModalOpen ?? false);
 
             if (inTitle)
             {
@@ -82,6 +85,7 @@ namespace EmberwardCoop.Core
             float now = Time.unscaledTime;
             _lobbyPanel?.Tick(now);
             _hudOverlay?.Tick(now);
+            _voteDraftOverlay?.Tick(now);
             _disconnectModal?.Tick(now);
             _settingsModal?.Tick();
         }

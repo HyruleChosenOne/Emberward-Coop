@@ -7,7 +7,10 @@ namespace EmberwardCoop.Rules
     public interface ICoopRuleset
     {
         CoopEconomyMode Mode { get; }
+        bool SyncsGlobalGold { get; }
+        bool SyncsGlobalDeckAndHand { get; }
         bool SyncsGlobalEconomyAndHand { get; }
+        bool UsesIndividualLoadouts { get; }
         bool EnforcesEntityOwnership { get; }
         bool AllowsClientIndependentDraftsAndShops { get; }
         bool BlocksClientLocalEconomyAndHandMutations { get; }
@@ -29,10 +32,13 @@ namespace EmberwardCoop.Rules
         public SharedResourcesRuleset(SessionSettings settings) => _settings = settings;
 
         public CoopEconomyMode Mode => CoopEconomyMode.SharedResources;
-        public bool SyncsGlobalEconomyAndHand => true;
+        public bool SyncsGlobalGold => true;
+        public bool SyncsGlobalDeckAndHand => _settings.SharedLoadoutsInSharedMode;
+        public bool SyncsGlobalEconomyAndHand => _settings.SharedLoadoutsInSharedMode;
+        public bool UsesIndividualLoadouts => !_settings.SharedLoadoutsInSharedMode;
         public bool EnforcesEntityOwnership => false;
-        public bool AllowsClientIndependentDraftsAndShops => false;
-        public bool BlocksClientLocalEconomyAndHandMutations => true;
+        public bool AllowsClientIndependentDraftsAndShops => !_settings.SharedLoadoutsInSharedMode;
+        public bool BlocksClientLocalEconomyAndHandMutations => _settings.SharedLoadoutsInSharedMode;
         public bool ClientSpendsOwnResourcesOnBuild => false;
         public bool SupportsResourceGifting => false;
 
@@ -40,7 +46,7 @@ namespace EmberwardCoop.Rules
         public bool CanPlayerRecallBlock(int playerId, Obj_TetrisBlock block) => true;
         public int ComputeStartingGold(int baseCoin, int playerCount) => baseCoin;
         public int ComputeScaledIncome(int positiveDelta, int playerCount) => positiveDelta;
-        public int ComputeDraftSeedSalt(int localPlayerId) => 0;
+        public int ComputeDraftSeedSalt(int localPlayerId) => _settings.SharedLoadoutsInSharedMode ? 0 : unchecked(localPlayerId * 73856093);
         public bool CanClientChangeGameSpeed() => _settings.SpeedControl == SpeedControlRule.AnyPlayer;
     }
 
@@ -56,7 +62,10 @@ namespace EmberwardCoop.Rules
         }
 
         public CoopEconomyMode Mode => CoopEconomyMode.SeparateResources;
+        public bool SyncsGlobalGold => false;
+        public bool SyncsGlobalDeckAndHand => false;
         public bool SyncsGlobalEconomyAndHand => false;
+        public bool UsesIndividualLoadouts => true;
         public bool EnforcesEntityOwnership => true;
         public bool AllowsClientIndependentDraftsAndShops => _settings.DraftMode == DraftSyncMode.SimultaneousIndependent;
         public bool BlocksClientLocalEconomyAndHandMutations => false;

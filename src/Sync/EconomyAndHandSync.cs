@@ -272,28 +272,29 @@ namespace EmberwardCoop.Sync
             var ig = MainGame.Instance?.IngameData;
             if (ig == null) return;
 
-            bool syncGlobal = _session()?.Ruleset.SyncsGlobalEconomyAndHand ?? true;
+            bool syncGold = _session()?.Ruleset.SyncsGlobalGold ?? true;
+            bool syncDeckHand = _session()?.Ruleset.SyncsGlobalDeckAndHand ?? true;
 
             using (NetworkScope.Enter())
             {
-                // Shared Core HP, Armor, Score always sync in BOTH Shared & Separate Resources modes
+                // Core Health, Armor, and Score are ALWAYS a single shared pool across all players.
                 if (ig.HP != hp) ig.SetHP(hp);
                 if (ig.Armor != armor) ig.SetArmor(armor);
                 if (ig.Score != score) ig.SetScore(score);
 
-                if (!syncGlobal)
+                if (syncGold)
                 {
-                    // In Separate Resources mode, Client retains its own independent Coin, Energy, Hand, Deck & Loadout!
-                    return;
+                    if (ig.Coin != coin) ig.SetCoin(coin);
+                    if (ig.Energy != energy)
+                    {
+                        ig._Energy_k__BackingField = energy;
+                        GameRefs.GetPlayerStatus()?.OnEnergyChanged(energy);
+                    }
+                    if (ig.CosmoShard != cosmoShard) ig.SetCosmoShard(cosmoShard);
                 }
 
-                if (ig.Coin != coin) ig.SetCoin(coin);
-                if (ig.Energy != energy)
-                {
-                    ig._Energy_k__BackingField = energy;
-                    GameRefs.GetPlayerStatus()?.OnEnergyChanged(energy);
-                }
-                if (ig.CosmoShard != cosmoShard) ig.SetCosmoShard(cosmoShard);
+                if (!syncDeckHand)
+                    return;
 
                 ig._FreeDrawCardChance_k__BackingField = freeDraw;
                 ig._ExtraHandCardLimit_k__BackingField = extraHand;
@@ -308,7 +309,7 @@ namespace EmberwardCoop.Sync
                     deckUI.text_DeckCardCount.text = deckCount.ToString();
 
                 var gd = GameDataManager.instance?.GameplayData;
-                if (gd?.list_LoadoutTowerData != null)
+                if (gd?.list_LoadoutTowerData != null && lCount > 0)
                 {
                     bool diff = gd.list_LoadoutTowerData.Count != lCount;
                     if (!diff)
@@ -325,6 +326,7 @@ namespace EmberwardCoop.Sync
                         gd.list_LoadoutTowerData.Clear();
                         for (int i = 0; i < lCount; i++)
                             gd.list_LoadoutTowerData.Add(new TowerIngameData((eItemType)loadoutTypes[i], loadoutLevels[i]));
+                        GameRefs.GetPlayerTowerList()?.UpdateCards(gd.list_LoadoutTowerData);
                         GameRefs.SendEvent0(eGameEvents.OnTowerCardChanged);
                     }
                 }
